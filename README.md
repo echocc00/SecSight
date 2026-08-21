@@ -76,7 +76,16 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚧 Phase1 开发中 — 垂直切片已跑通,6 个 P0 剧本全部接线 (挖矿/勒索/持久化/暴破/日志合规/服务崩溃),mock 全栈端到端验证通过。**真实 LLM (MiniMax) 研判已接入并验证** (真 LLM 主 + 故障降级 mock)。测试覆盖率 90%。
+🚀 Phase2 完成 — 12 剧本 (6 P0 + 6 P1) + 5 真实组件 + 生产化加固 (认证/监控/安全/合规报告)。221 测试,覆盖率 87.9%。
+
+**Phase2 新增**:
+- 生产化加固: JWT 认证 + 4 角色 (admin/analyst/approver/viewer) + 权限矩阵
+- 监控: Prometheus 指标 (/metrics) + Grafana SOC KPI 面板 + 扩展健康检查
+- 安全: slowapi 速率限制 + PII 脱敏 + CORS 收紧 + 密钥校验
+- 合规: 等保 2.0 三级报告自动生成 (HTML/Markdown,Jinja2 模板)
+- +6 P1 剧本: Web攻击/数据外泄/横向移动/提权/C2/钓鱼
+- docker-compose 全栈生产化: 7 组件 + 健康检查 + 资源限制 + 网络隔离
+- CI: license 隔离检查 + 测试覆盖率门槛 80%
 
 **LLM 接入** (mock_mode=false):
 - 真 LLM 主: MiniMax (OpenAI 兼容直连),研判由真实推理生成

@@ -16,8 +16,9 @@ from app.playbooks.engine import PlaybookEngine, engine
 
 
 class TestPlaybookLoading:
-    def test_loads_all_six_phase1_playbooks(self):
-        assert len(engine.playbooks) == 6
+    def test_loads_all_phase1_and_phase2_playbooks(self):
+        # Phase1: 6 P0 + Phase2: 6 P1 = 12
+        assert len(engine.playbooks) == 12
 
     def test_get_by_id_returns_matching_playbook(self):
         pb = engine.get_by_id("pb_cryptominer_v1")
@@ -49,6 +50,40 @@ class TestPlaybookMatching:
 
     def test_critical_service_crash_matches_service_crash(self):
         assert engine.match(critical_service_crash_alert()).id == "pb_service_crash_v1"
+
+
+class TestPhase2PlaybookMatching:
+    """Phase2 P1 剧本匹配"""
+
+    def test_web_attack_matches(self):
+        from app.mock.alerts import web_sql_injection_alert
+
+        assert engine.match(web_sql_injection_alert()).id == "pb_web_attack_v1"
+
+    def test_data_exfiltration_matches(self):
+        from app.mock.alerts import data_exfiltration_alert
+
+        assert engine.match(data_exfiltration_alert()).id == "pb_data_exfiltration_v1"
+
+    def test_lateral_movement_matches(self):
+        from app.mock.alerts import lateral_movement_alert
+
+        assert engine.match(lateral_movement_alert()).id == "pb_lateral_movement_v1"
+
+    def test_privilege_escalation_matches(self):
+        from app.mock.alerts import privilege_escalation_alert
+
+        assert engine.match(privilege_escalation_alert()).id == "pb_privilege_escalation_v1"
+
+    def test_c2_communication_matches(self):
+        from app.mock.alerts import c2_communication_alert
+
+        assert engine.match(c2_communication_alert()).id == "pb_c2_communication_v1"
+
+    def test_phishing_email_matches(self):
+        from app.mock.alerts import phishing_email_alert
+
+        assert engine.match(phishing_email_alert()).id == "pb_phishing_v1"
 
 
 class TestScoringPrecedence:

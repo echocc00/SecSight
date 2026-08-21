@@ -1,0 +1,30 @@
+# Prometheus 配置 — 抓取 SecSight 指标
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "secsight-backend"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["secsight-backend:8000"]
+        labels:
+          service: secsight
+
+  - job_name: "litellm"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["litellm:4000"]
+        labels:
+          service: litellm
+
+  - job_name: "qdrant"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["qdrant:6333"]
+        labels:
+          service: qdrant
+
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -1,0 +1,78 @@
+# 权限提升检测与响应 (Phase2 P1)
+# MITRE: TA0004 Privilege Escalation
+
+id: pb_privilege_escalation_v1
+name: 权限提升检测与响应
+category: host
+priority: P1
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: 攻击者提权至 root/SYSTEM,完全控制主机。
+  检测源: auditd + Sysmon + Wazuh (sudo 滥用/suid 提权/漏洞)。
+
+triggers:
+  sigma_rules: [sudo_abuse, su_to_root_anomaly, suid_exploit]
+  wazuh_rules: ["5902", "5903"]
+  indicators:
+    commands: ["sudo -i", "su root", "nmap --interactive", "find / -perm -4000"]
+
+mitre_mapping:
+  tactics: [TA0004 Privilege Escalation]
+  techniques: [T1068 Exploitation for Privilege Escalation, T1548.001 Setuid/Setgid, T1078.003 Local Accounts]
+
+investigation_steps:
+  - id: I1
+    name: 提权路径分析
+    tools: [auditd_query, sysmon_parent_child]
+    autonomy: L4
+    output: path
+  - id: I2
+    name: 漏洞/CVE 关联
+    tools: [nvd_query, trivy_scan]
+    autonomy: L4
+    output: cve
+  - id: I3
+    name: 提权后行为
+    tools: [auditd_query, osquery_processes]
+    autonomy: L4
+    output: post_actions
+
+containment_actions:
+  - id: A1_isolate_host
+    name: 隔离主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    risk: critical
+    tools: [firewall_block_host]
+  - id: A2_kill_process
+    name: kill 提权进程
+    action_type: kill_process
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_kill]
+  - id: A3_disable_suid
+    name: 移除可疑 suid 位
+    action_type: quarantine_file
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_clean]
+  - id: A4_patch
+    name: 漏洞修复 (打补丁)
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [notify]
+  - id: A5_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [suid_binaries, exploited_cves]
+  ttps: [privilege_escalation_techniques]

@@ -174,6 +174,8 @@ async def enrich_ioc_node(state: dict) -> dict:
 
 async def analyze_node(state: dict) -> dict:
     """节点: mock LLM 输出结构化研判报告"""
+    from app.core.metrics import record_case_created, record_llm_call
+
     llm = get_llm()
     case_id = state["case_id"]
 
@@ -190,6 +192,10 @@ async def analyze_node(state: dict) -> dict:
         await repo.update_judgment(case_id, report)
         state["judgment"] = report.model_dump(mode="json")
         await _audit("analysis_done", "llm", case_id, {"confidence": report.confidence})
+
+        # 指标埋点: LLM 调用 (判断是否降级)
+        used_real = getattr(llm, "last_used", "real") == "real"
+        record_llm_call("tier2", success=used_real)
 
     log.info("node.analyze", case_id=case_id, severity=report.severity.value, confidence=report.confidence)
     return state
@@ -235,6 +241,7 @@ async def human_approve_node(state: dict) -> dict:
 
 async def execute_node(state: dict) -> dict:
     """节点: 执行已批准的 Action (mock executor)"""
+    from app.core.metrics import record_execution
     from app.execution.mock import get_executor
 
     case_id = state["case_id"]
@@ -264,6 +271,9 @@ async def execute_node(state: dict) -> dict:
             step.result = result
             await repo.append_execution(case_id, step)
 
+            # 指标埋点
+            record_execution(action.action_type.value, success=step.status == "success")
+
         await repo.update_status(case_id, CaseStatus.contained)
 
     log.info("node.execute", case_id=case_id)
@@ -282,6 +292,8 @@ async def escalate_node(state: dict) -> dict:
 
 async def update_case_node(state: dict) -> dict:
     """节点: 生成 Evidence Pack + 关闭 Case + L3 沉淀"""
+    from app.core.metrics import record_case_created, record_tttr
+
     case_id = state["case_id"]
 
     async with async_session() as session:
@@ -292,6 +304,7 @@ async def update_case_node(state: dict) -> dict:
 
         # 计算 TTTR
         tttr = int((datetime.utcnow() - case.created_at).total_seconds())
+        record_tttr(tttr)
 
         # 构建 Evidence Pack
         evidence_repo = EvidencePackRepository(session)
@@ -317,6 +330,7 @@ async def update_case_node(state: dict) -> dict:
         await repo.set_evidence_pack(case_id, pack_id)
         await repo.close(case_id, tttr)
         await _audit("case_closed", "system", case_id, {"tttr": tttr, "pack_id": pack_id})
+        record_case_created("resolved", case.playbook_id or "")
 
     log.info("node.update_case", case_id=case_id, tttr=tttr)
     return state

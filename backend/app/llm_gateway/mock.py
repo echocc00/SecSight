@@ -101,6 +101,72 @@ PRESET_REPORTS: dict[str, JudgmentReport] = {
         rationale="nginx 被 kill -9 终止,来源进程/用户未知,需重启恢复并排查是否恶意,必要时封禁来源。",
         citations=["attck:T1489"],
     ),
+    "web_attack": JudgmentReport(
+        incident_summary="检测到 SQL 注入尝试,攻击者尝试绕过登录认证",
+        severity=Severity.high,
+        ttps=["T1190"],
+        kill_chain_phase="initial-access",
+        true_positive="yes",
+        confidence=0.85,
+        recommended_actions=[ActionType.block_ip],
+        rationale="URL 含 ' OR 1=1-- 经典 SQL 注入载荷,响应码 200 提示可能成功,需封禁源 IP 并修补漏洞。",
+        citations=["attck:T1190"],
+    ),
+    "data_exfiltration": JudgmentReport(
+        incident_summary="检测到 8.2GB 数据外传至未知域名 exfil.evil.com",
+        severity=Severity.critical,
+        ttps=["T1048", "T1567"],
+        kill_chain_phase="exfiltration",
+        true_positive="yes",
+        confidence=0.9,
+        recommended_actions=[ActionType.block_ip, ActionType.block_domain, ActionType.isolate_host],
+        rationale="异常大流量外传至可疑域名,目标 IP 情报待查,需立即封禁+隔离+24h 合规上报。",
+        citations=["attck:T1048", "attck:T1567"],
+    ),
+    "lateral_movement": JudgmentReport(
+        incident_summary="检测到 SMB 管理共享 + PsExec 横向移动到 10.0.2.20",
+        severity=Severity.high,
+        ttps=["T1021", "T1570"],
+        kill_chain_phase="lateral-movement",
+        true_positive="yes",
+        confidence=0.83,
+        recommended_actions=[ActionType.isolate_host, ActionType.block_ip],
+        rationale="PsExec 访问 ADMIN$ 共享是典型横向手法,需隔离源主机+目标,重置凭据。",
+        citations=["attck:T1021", "attck:T1570"],
+    ),
+    "privilege_escalation": JudgmentReport(
+        incident_summary="www-data 用户执行 sudo -i 提权至 root",
+        severity=Severity.critical,
+        ttps=["T1068", "T1548.001"],
+        kill_chain_phase="privilege-escalation",
+        true_positive="yes",
+        confidence=0.88,
+        recommended_actions=[ActionType.isolate_host, ActionType.kill_process],
+        rationale="Web 服务账户不应有 sudo 权限,提权成功意味着系统被完全控制,需立即隔离+排查漏洞。",
+        citations=["attck:T1068"],
+    ),
+    "c2_communication": JudgmentReport(
+        incident_summary="检测到 60 秒周期信标流量到 c2.evil-bot.net",
+        severity=Severity.high,
+        ttps=["T1071", "T1573"],
+        kill_chain_phase="command-and-control",
+        true_positive="yes",
+        confidence=0.87,
+        recommended_actions=[ActionType.block_ip, ActionType.block_domain, ActionType.isolate_host],
+        rationale="固定周期小流量外联是 C2 信标特征,域名含 evil-bot 提示恶意,需封禁+隔离+取证。",
+        citations=["attck:T1071"],
+    ),
+    "phishing": JudgmentReport(
+        incident_summary="检测到钓鱼邮件含恶意附件 invoice.xlsm,42 人收到",
+        severity=Severity.medium,
+        ttps=["T1566", "T1566.001"],
+        kill_chain_phase="initial-access",
+        true_positive="yes",
+        confidence=0.78,
+        recommended_actions=[ActionType.quarantine_file, ActionType.block_domain, ActionType.notify],
+        rationale="伪造 HR 邮箱发送宏附件,典型钓鱼,需隔离邮件+封禁发件人+通知收件人。",
+        citations=["attck:T1566"],
+    ),
 }
 
 
@@ -124,6 +190,19 @@ def _detect_scenario(messages: list[dict]) -> str:
         return "log_compliance"
     if "t1489" in text:
         return "service_crash"
+    # Phase2 P1
+    if "t1190" in text or "sql injection" in text or "web_attack" in text:
+        return "web_attack"
+    if "t1048" in text or "exfiltration" in text or "data_exfil" in text:
+        return "data_exfiltration"
+    if "t1021" in text or "t1570" in text or "lateral" in text or "psexec" in text:
+        return "lateral_movement"
+    if "t1068" in text or "privilege" in text or "sudo -i" in text:
+        return "privilege_escalation"
+    if "t1071" in text or "c2_beacon" in text or "beacon" in text or "c2_communication" in text:
+        return "c2_communication"
+    if "t1566" in text or "phishing" in text or "invoice.xlsm" in text:
+        return "phishing"
     # 关键词兜底
     if "xmrig" in text or "stratum" in text or "mining" in text:
         return "cryptominer"

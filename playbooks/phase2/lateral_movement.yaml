@@ -1,0 +1,80 @@
+# 横向移动检测与阻断 (Phase2 P1)
+# MITRE: TA0008 Lateral Movement
+
+id: pb_lateral_movement_v1
+name: 横向移动检测与阻断
+category: network
+priority: P1
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: 攻击者在内网横向扩散,扩大控制面。
+  检测源: Wazuh + Sysmon (SMB/RDP/PsExec/WinRM) + Zeek。
+
+triggers:
+  sigma_rules: [suspicious_smb_admin_share, rdp_lateral, psexec_execution]
+  wazuh_rules: ["601", "602"]
+  indicators:
+    commands: ["psexec", "winrm", "net use \\\\", "schtasks /create /s"]
+
+mitre_mapping:
+  tactics: [TA0008 Lateral Movement]
+  techniques: [T1021 Remote Services, T1570 Lateral Tool Transfer, T1057 Process Discovery]
+
+investigation_steps:
+  - id: I1
+    name: 源-目标主机对
+    tools: [suricata_flow_query, zeek_log_query]
+    autonomy: L4
+    output: host_pairs
+  - id: I2
+    name: 账户凭据分析
+    tools: [wazuh_auth_log, windows_event_log]
+    autonomy: L4
+    output: accounts
+  - id: I3
+    name: 影响范围 (受控主机数)
+    tools: [cmdb_query, wazuh_group_scan]
+    autonomy: L4
+    output: scope
+
+containment_actions:
+  - id: A1_isolate_source
+    name: 隔离跳板源主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    risk: critical
+    tools: [firewall_block_host]
+  - id: A2_isolate_targets
+    name: 隔离受控目标主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    risk: critical
+    tools: [firewall_block_host]
+  - id: A3_block_lateral
+    name: 禁用 SMB/RDP/WinRM 横向
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [firewall_policy_update]
+  - id: A4_reset_credentials
+    name: 重置涉事账户凭据
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [iam_password_reset, iam_enable_mfa]
+  - id: A5_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [lateral_accounts, affected_hosts]
+  ttps: [lateral_movement_techniques]

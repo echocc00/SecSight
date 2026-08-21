@@ -1,0 +1,69 @@
+# 等保 2.0 三级事件报告
+
+**报告编号:** SECSIGHT-{{ case_id[:8] }}
+**生成时间:** {{ generated_at }}
+**事件等级:** {{ severity | upper }}
+**事件状态:** {{ case.status }}
+**TTTR:** {{ tttr_seconds if tttr_seconds else "进行中" }} 秒
+
+## 一、事件概述
+
+{% if judgment %}
+{{ judgment.incident_summary }}
+
+- 严重性: {{ severity }}
+- 置信度: {{ "%.1f" | format(judgment.confidence * 100) }}%
+- 真阳性: {{ judgment.true_positive }}
+- 发生时间: {{ created_at }}
+{% endif %}
+
+## 二、检测过程
+
+### 2.1 告警列表
+{% for alert in alerts %}
+- [{{ alert.ts[:19] }}] {{ alert.source }} 规则{{ alert.rule_id }} (L{{ alert.rule_level }}): {{ alert.message }}
+{% endfor %}
+
+### 2.2 MITRE ATT&CK
+- 战术: {{ mitre_tactics | join(", ") }}
+- 技术: {{ mitre_techniques | join(", ") }}
+
+## 三、分析研判
+{% if judgment %}
+- LLM 研判: {{ judgment.rationale }}
+- 建议动作: {{ judgment.recommended_actions | join(", ") }}
+- 引用: {{ judgment.citations | join(", ") }}
+{% endif %}
+
+## 四、处置措施
+{% for action in actions %}
+- {{ action.action_id[:8] }} | {{ action.action_type }} | {{ action.autonomy_level }} | {{ action.risk }} | {{ "需审批" if action.approval_required else "自动" }}
+{% endfor %}
+
+### 执行时间线
+{% for exec in executions %}
+- {{ exec.started_at[:19] if exec.started_at else "—" }} → {{ exec.finished_at[:19] if exec.finished_at else "—" }} | {{ exec.status }} | {{ exec.result.message if exec.result else "—" }}
+{% endfor %}
+
+## 五、影响评估
+- 告警数: {{ alerts | length }}
+- 涉及资产: {{ case.alerts | length }}
+- 业务影响: 待人工补充
+
+## 六、根因分析
+{{ judgment.rationale if judgment else "待分析" }}
+
+## 七、合规留痕
+{% for log in audit_logs %}
+- [{{ log.ts[:19] if log.ts else "—" }}] {{ log.action }} by {{ log.actor }}
+{% endfor %}
+
+## 八、整改建议
+- 修复检测规则覆盖盲区
+- 加强相关资产加固
+- 安全意识培训 (如涉及钓鱼)
+- 知识库沉淀本次案例
+
+---
+*本报告由 SecSight AI 安全运维平台自动生成 | 等保 2.0 三级*
+*Case ID: {{ case_id }}*

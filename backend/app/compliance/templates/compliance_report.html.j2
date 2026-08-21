@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>等保 2.0 三级事件报告 — Case {{ case_id[:8] }}</title>
+<style>
+body { font-family: "Microsoft YaHei", sans-serif; margin: 40px; color: #333; }
+h1 { color: #1a1a1a; border-bottom: 2px solid #333; padding-bottom: 10px; }
+h2 { color: #1677ff; margin-top: 30px; }
+h3 { color: #333; margin-top: 20px; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+th { background: #f5f5f5; }
+.critical { color: #cf1322; font-weight: bold; }
+.high { color: #d4380d; }
+.medium { color: #d4b106; }
+.low { color: #389e0d; }
+.meta { background: #fafafa; padding: 15px; border-left: 4px solid #1677ff; margin: 20px 0; }
+.footer { margin-top: 40px; padding-top: 15px; border-top: 1px solid #ddd; font-size: 12px; color: #999; }
+pre { background: #f6f8fa; padding: 12px; overflow-x: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>信息安全事件报告</h1>
+<p style="font-size: 14px; color: #666;">等保 2.0 三级 · 自动生成</p>
+
+<div class="meta">
+<p><strong>报告编号:</strong> SECSIGHT-{{ case_id[:8] }}</p>
+<p><strong>生成时间:</strong> {{ generated_at }}</p>
+<p><strong>事件等级:</strong> <span class="{{ severity }}">{{ severity | upper }}</span></p>
+<p><strong>事件状态:</strong> {{ case.status }}</p>
+<p><strong>响应耗时 (TTTR):</strong> {{ tttr_seconds if tttr_seconds else "进行中" }} 秒</p>
+</div>
+
+<h2>一、事件概述</h2>
+{% if judgment %}
+<p>{{ judgment.incident_summary }}</p>
+<table>
+<tr><th>严重性</th><td class="{{ severity }}">{{ severity | upper }}</td></tr>
+<tr><th>置信度</th><td>{{ "%.1f" | format(judgment.confidence * 100) }}%</td></tr>
+<tr><th>真阳性</th><td>{{ judgment.true_positive }}</td></tr>
+<tr><th>发生时间</th><td>{{ created_at }}</td></tr>
+</table>
+{% else %}
+<p>研判报告尚未生成。</p>
+{% endif %}
+
+<h2>二、检测过程</h2>
+<h3>2.1 告警列表</h3>
+<table>
+<tr><th>时间</th><th>来源</th><th>规则</th><th>级别</th><th>消息</th></tr>
+{% for alert in alerts %}
+<tr>
+<td>{{ alert.ts[:19] }}</td>
+<td>{{ alert.source }}</td>
+<td>{{ alert.rule_id }}</td>
+<td>{{ alert.rule_level }}</td>
+<td>{{ alert.message }}</td>
+</tr>
+{% endfor %}
+</table>
+
+<h3>2.2 MITRE ATT&CK 映射</h3>
+<table>
+<tr><th>战术</th><th>技术</th></tr>
+<tr>
+<td>{{ mitre_tactics | join(", ") }}</td>
+<td>{{ mitre_techniques | join(", ") }}</td>
+</tr>
+</table>
+
+<h2>三、分析研判</h2>
+{% if judgment %}
+<table>
+<tr><th>LLM 研判</th><td>{{ judgment.rationale }}</td></tr>
+<tr><th>建议动作</th><td>{{ judgment.recommended_actions | join(", ") }}</td></tr>
+<tr><th>引用依据</th><td>{{ judgment.citations | join(", ") }}</td></tr>
+</table>
+{% endif %}
+
+<h2>四、处置措施</h2>
+<table>
+<tr><th>动作</th><th>类型</th><th>自主性</th><th>风险</th><th>审批</th></tr>
+{% for action in actions %}
+<tr>
+<td>{{ action.action_id[:8] }}</td>
+<td>{{ action.action_type }}</td>
+<td>{{ action.autonomy_level }}</td>
+<td>{{ action.risk }}</td>
+<td>{{ "需审批" if action.approval_required else "自动" }}</td>
+</tr>
+{% endfor %}
+</table>
+
+<h3>4.1 执行时间线</h3>
+<table>
+<tr><th>开始</th><th>结束</th><th>状态</th><th>结果</th></tr>
+{% for exec in executions %}
+<tr>
+<td>{{ exec.started_at[:19] if exec.started_at else "—" }}</td>
+<td>{{ exec.finished_at[:19] if exec.finished_at else "—" }}</td>
+<td>{{ exec.status }}</td>
+<td>{{ exec.result.message if exec.result else "—" }}</td>
+</tr>
+{% endfor %}
+</table>
+
+<h2>五、影响评估</h2>
+<p>本次事件影响范围: {{ alerts | length }} 条告警,涉及 {{ case.alerts | length }} 台资产。</p>
+<p>业务影响: 待人工补充评估。</p>
+
+<h2>六、根因分析</h2>
+<p>入侵路径: {{ judgment.rationale if judgment else "待分析" }}</p>
+<p>整改建议: 见第八节。</p>
+
+<h2>七、合规留痕</h2>
+<table>
+<tr><th>时间</th><th>动作</th><th>操作人</th></tr>
+{% for log in audit_logs %}
+<tr>
+<td>{{ log.ts[:19] if log.ts else "—" }}</td>
+<td>{{ log.action }}</td>
+<td>{{ log.actor }}</td>
+</tr>
+{% endfor %}
+</table>
+
+<h2>八、整改建议</h2>
+<ul>
+<li>修复检测规则覆盖盲区</li>
+<li>加强相关资产加固</li>
+<li>安全意识培训 (如涉及钓鱼)</li>
+<li>知识库沉淀本次案例</li>
+</ul>
+
+<h2>附件</h2>
+{% if evidence %}
+<p>Evidence Pack ID: {{ evidence.pack_id }}</p>
+<pre>{{ evidence | tojson(indent=2) }}</pre>
+{% else %}
+<p>暂无 Evidence Pack</p>
+{% endif %}
+
+<div class="footer">
+<p>本报告由 SecSight AI 安全运维平台自动生成 | 等保 2.0 三级</p>
+<p>报告生成时间: {{ generated_at }} | Case ID: {{ case_id }}</p>
+</div>
+
+</body>
+</html>

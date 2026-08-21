@@ -1,0 +1,85 @@
+# C2 通信检测与阻断 (Phase2 P1)
+# MITRE: TA0011 Command and Control
+
+id: pb_c2_communication_v1
+name: C2 通信检测与阻断
+category: network
+priority: P1
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: 主机被控,持续外联 C2,数据外泄/遥控风险。
+  检测源: Suricata + Zeek (信标/心跳/DGA) + Threat Intel。
+
+triggers:
+  sigma_rules: [c2_beacon_detected, dga_domain, known_c2_ip]
+  suricata_rules: ["ET C2", "ET trojan"]
+  indicators:
+    commands: []
+
+mitre_mapping:
+  tactics: [TA0011 Command and Control]
+  techniques: [T1071 Application Layer Protocol, T1573 Encrypted Channel, T1568 Dynamic Resolution]
+
+investigation_steps:
+  - id: I1
+    name: C2 指标富化
+    tools: [opencti_query, abuseipdb_query, otx_query]
+    autonomy: L4
+    output: c2_intel
+  - id: I2
+    name: 信标周期分析
+    tools: [zeek_log_query, suricata_flow_query]
+    autonomy: L4
+    output: beacon_pattern
+  - id: I3
+    name: 受控主机定位
+    tools: [suricata_flow_query, wazuh_agent_query]
+    autonomy: L4
+    output: infected_hosts
+
+containment_actions:
+  - id: A1_block_c2_ip
+    name: 封禁 C2 IP
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [firewall_block_ip, crowdsec_bouncer_block]
+  - id: A2_block_c2_domain
+    name: 封禁 C2 域名 (DNS 黑洞)
+    action_type: block_domain
+    autonomy: L2
+    approval: double
+    tools: [dns_sinkhole, firewall_block_domain]
+  - id: A3_isolate_host
+    name: 隔离受控主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    risk: critical
+    tools: [firewall_block_host]
+  - id: A4_forensic
+    name: 取证捕获 (内存/进程)
+    action_type: forensic_capture
+    autonomy: L3
+    approval: key_decision
+    tools: [memory_capture, disk_forensic]
+  - id: A5_lateral_scan
+    name: 横向扫描同 C2 主机
+    action_type: query_asset
+    autonomy: L4
+    approval: sampling
+    tools: [wazuh_group_scan]
+  - id: A6_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [c2_ips, c2_domains, c2_hashes]
+  ttps: [c2_techniques]

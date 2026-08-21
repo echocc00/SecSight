@@ -1,0 +1,39 @@
+{
+  "title": "SecSight SOC KPI",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "总 Case 数",
+      "targets": [{ "expr": "secsight_cases_total", "legendFormat": "cases" }],
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "待审批",
+      "targets": [{ "expr": "secsight_cases_total{status=\"pending_approval\"}", "legendFormat": "pending" }],
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "LLM 降级次数",
+      "targets": [{ "expr": "increase(secsight_llm_fallback_total[1h])", "legendFormat": "fallbacks" }],
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "处置成功率",
+      "targets": [{ "expr": "secsight_execution_success_rate", "legendFormat": "rate" }],
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "title": "TTTR 分布",
+      "targets": [{ "expr": "histogram_quantile(0.95, rate(secsight_tttr_seconds_bucket[5m]))", "legendFormat": "p95 TTTR" }],
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 }
+    }
+  ]
+}

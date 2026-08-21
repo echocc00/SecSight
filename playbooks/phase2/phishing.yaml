@@ -1,0 +1,88 @@
+# 钓鱼邮件响应 (Phase2 P1)
+# MITRE: TA0001 Initial Access + T1566 Phishing
+
+id: pb_phishing_v1
+name: 钓鱼邮件响应
+category: email
+priority: P1
+phase: 2
+version: "1.0"
+autonomy_level_default: L3
+
+description: |
+  业务影响: 员工中招 → 凭据泄露/木马落地。
+  检测源: 邮件网关 + Wazuh (恶意附件/链接) + Office365。
+
+triggers:
+  sigma_rules: [phishing_email_detected, malicious_attachment, suspicious_url_in_email]
+  wazuh_rules: ["0320", "0321"]
+  indicators:
+    commands: []
+
+mitre_mapping:
+  tactics: [TA0001 Initial Access]
+  techniques: [T1566 Phishing, T1566.001 Spearphishing Attachment, T1566.002 Spearphishing Link]
+
+investigation_steps:
+  - id: I1
+    name: 发件人/域名情报
+    tools: [opencti_query, abuseipdb_query, otx_query]
+    autonomy: L4
+    output: sender_intel
+  - id: I2
+    name: 附件 hash 分析
+    tools: [virustotal_hash, otx_query]
+    autonomy: L4
+    output: attachment_verdict
+  - id: I3
+    name: 收件人范围 (多少人收到)
+    tools: [mail_log_query]
+    autonomy: L4
+    output: recipients
+  - id: I4
+    name: 是否有员工点击/下载
+    tools: [proxy_log, endpoint_log]
+    autonomy: L4
+    output: clicked
+
+containment_actions:
+  - id: A1_quarantine_emails
+    name: 隔离所有钓鱼邮件
+    action_type: quarantine_file
+    autonomy: L3
+    approval: key_decision
+    tools: [mail_quarantine]
+  - id: A2_block_sender
+    name: 封禁发件人域名/IP
+    action_type: block_domain
+    autonomy: L3
+    approval: key_decision
+    tools: [firewall_block_domain, mail_block_sender]
+  - id: A3_notify_recipients
+    name: 通知收件人 (勿点击)
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [notify]
+  - id: A4_password_reset
+    name: 若有点击 → 重置凭据
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [iam_password_reset, iam_enable_mfa]
+  - id: A5_endpoint_scan
+    name: 终端扫描 (若有附件落地)
+    action_type: query_asset
+    autonomy: L4
+    approval: sampling
+    tools: [wazuh_group_scan]
+  - id: A6_post_incident
+    name: 复盘 + 安全意识培训
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [sender_emails, sender_domains, attachment_hashes, phishing_urls]
+  ttps: [phishing_techniques]

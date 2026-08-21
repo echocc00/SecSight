@@ -1,0 +1,91 @@
+# 数据外泄应急响应 (Phase2 P1)
+# MITRE: TA0010 Exfiltration + T1048 Exfiltration Over Alternative Protocol
+
+id: pb_data_exfiltration_v1
+name: 数据外泄应急响应
+category: data
+priority: P1
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: 敏感数据外传,合规风险 (等保/个保)。
+  检测源: Suricata 大流量外传 + DLP + DNS 隧道检测。
+
+triggers:
+  sigma_rules: [large_data_transfer, dns_tunneling, ftp_to_unknown]
+  suricata_rules: ["ET POLICY Unusual outbound data volume"]
+  indicators:
+    commands: ["curl -F", "scp", "nc ", "base64 -d"]
+
+mitre_mapping:
+  tactics: [TA0010 Exfiltration]
+  techniques: [T1048 Exfiltration Over Alternative Protocol, T1041 Exfiltration Over C2 Channel, T1567 Exfiltration Over Web Service]
+
+investigation_steps:
+  - id: I1
+    name: 外传目标分析
+    tools: [suricata_flow_query, opencti_query, abuseipdb_query]
+    autonomy: L4
+    output: dst_intel
+  - id: I2
+    name: 外传数据量与类型
+    tools: [zeek_log_query, dlp_scan]
+    autonomy: L4
+    output: data_scope
+  - id: I3
+    name: 源进程/用户定位
+    tools: [sysmon_network, auditd_query]
+    autonomy: L4
+    output: source
+
+containment_actions:
+  - id: A1_block_dst
+    name: 封禁外传目标
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [firewall_block_ip]
+  - id: A2_block_domain
+    name: 封禁外传域名
+    action_type: block_domain
+    autonomy: L2
+    approval: double
+    tools: [dns_sinkhole, firewall_block_domain]
+  - id: A3_isolate_host
+    name: 隔离源主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    risk: critical
+    tools: [firewall_block_host]
+  - id: A4_freeze_account
+    name: 冻结涉事账户
+    action_type: freeze_account
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [iam_freeze_account]
+  - id: A5_compliance_report
+    name: 合规报告 (数据泄露 24h 上报)
+    action_type: report_regulator
+    autonomy: L2
+    approval: double
+    deadline: 24h
+    tools: [compliance_report_generator]
+  - id: A6_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [exfil_ips, exfil_domains]
+  ttps: [exfiltration_techniques]
+compliance:
+  dengbao_level: 3
+  report_required: true
+  report_deadline_hours: 24

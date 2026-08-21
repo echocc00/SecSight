@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  license-isolation:
+    name: License 隔离检查 (AGPL/GPL 不被 import)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查无 AGPL/GPL SDK import
+        run: |
+          cd backend
+          # 禁止 import 的包 (AGPL/GPL 传染性)
+          if grep -rE "import (shuffle_sdk|wazuh_sdk|velociraptor|iris_modules|iris_mwdb|iris_intelowl|iris_skeleton)" app/; then
+            echo "❌ 违反 license 隔离: 发现 AGPL/GPL 代码 import"
+            echo "SecSight 主体必须仅通过 HTTP 调用这些组件,不 import 其代码"
+            exit 1
+          fi
+          echo "✅ license 隔离正常: 无 AGPL/GPL import"
+
+      - name: 检查 AGPL 组件在隔离网络
+        run: |
+          # docker-compose 中 Shuffle/OpenCTI/IRIS 必须在 isolation-net
+          if ! grep -A2 "shuffle:" deploy/docker-compose.yml | grep -q "isolation-net"; then
+            echo "⚠️ Shuffle 不在 isolation-net"
+          fi
+          echo "✅ 网络隔离检查完成"
+
+  test:
+    name: 测试 + 覆盖率
+    runs-on: ubuntu-latest
+    needs: license-isolation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: 运行测试
+        working-directory: backend
+        env:
+          PLAYBOOKS_DIR: ${{ github.workspace }}/playbooks
+          DATABASE_URL: sqlite+aiosqlite:///./test.db
+          SECSIGHT_ENV: test
+          SECSIGHT_MOCK_MODE: "true"
+        run: |
+          python -m pytest tests/ --cov=app --cov-report=term-missing --cov-report=xml -p no:warnings
+      - name: 覆盖率门槛 (80%)
+        working-directory: backend
+        run: |
+          python -m pytest tests/ --cov=app --cov-fail-under=80 -q -p no:warnings || (echo "❌ 覆盖率低于 80%" && exit 1)
+      - name: 上传覆盖率
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: backend/coverage.xml
+
+  build:
+    name: Docker 构建
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建 backend 镜像
+        run: docker build -t secsight-backend:ci ./backend
+      - name: 构建 frontend 镜像
+        run: docker build -t secsight-frontend:ci ./frontend

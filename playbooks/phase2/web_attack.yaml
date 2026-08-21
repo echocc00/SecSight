@@ -1,0 +1,78 @@
+# Web 攻击应急响应 (Phase2 P1)
+# MITRE: TA0011 Initial Access + T1190 Exploit Public-Facing Application
+
+id: pb_web_attack_v1
+name: Web 攻击应急响应
+category: application
+priority: P1
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: SQL注入/XSS/路径遍历,可能导致数据泄露或 RCE。
+  检测源: Wazuh + ModSecurity/NAXOSI WAF。
+
+triggers:
+  sigma_rules: [web_sql_injection, web_xss_attempt, web_path_traversal]
+  wazuh_rules: ["31151", "31152"]
+  indicators:
+    commands: ["union select", "or 1=1", "<script", "../etc/passwd"]
+
+mitre_mapping:
+  tactics: [TA0011 Initial Access]
+  techniques: [T1190 Exploit Public-Facing Application]
+
+investigation_steps:
+  - id: I1
+    name: 攻击载荷分析
+    tools: [wazuh_web_log_query, modsec_rule_id]
+    autonomy: L4
+    output: payload
+  - id: I2
+    name: 源 IP 情报
+    tools: [opencti_query, abuseipdb_query]
+    autonomy: L4
+    output: src_intel
+  - id: I3
+    name: 是否成功 (响应码/数据)
+    tools: [nginx_access_log, db_audit]
+    autonomy: L4
+    output: success
+
+containment_actions:
+  - id: A1_block_ip
+    name: 封禁攻击源 IP
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [firewall_block_ip, crowdsec_bouncer_block]
+  - id: A2_waf_rule
+    name: 临时 WAF 规则加固
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [modsec_rule_update]
+  - id: A3_patch
+    name: 漏洞修复 (代码/配置)
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [notify]
+  - id: A4_data_check
+    name: 数据完整性检查 (若成功)
+    action_type: query_asset
+    autonomy: L4
+    approval: sampling
+    tools: [db_integrity_check]
+  - id: A5_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [malicious_ips, payloads]
+  ttps: [web_attack_techniques]
