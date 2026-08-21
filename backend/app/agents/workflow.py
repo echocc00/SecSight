@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.nodes import (
     analyze_node,
+    enrich_ioc_node,
     escalate_node,
     execute_node,
     human_approve_node,
@@ -70,6 +71,7 @@ def build_trigger_workflow():
     wf = StateGraph(SecSightState)
     wf.add_node("ingest_alerts", ingest_alerts_node)
     wf.add_node("retrieve_knowledge", retrieve_knowledge_node)
+    wf.add_node("enrich_ioc", enrich_ioc_node)
     wf.add_node("analyze", analyze_node)
     wf.add_node("plan_actions", plan_actions_node)
     wf.add_node("human_approve", human_approve_node)
@@ -78,7 +80,8 @@ def build_trigger_workflow():
 
     wf.set_entry_point("ingest_alerts")
     wf.add_edge("ingest_alerts", "retrieve_knowledge")
-    wf.add_edge("retrieve_knowledge", "analyze")
+    wf.add_edge("retrieve_knowledge", "enrich_ioc")
+    wf.add_edge("enrich_ioc", "analyze")
     wf.add_edge("analyze", "plan_actions")
     wf.add_conditional_edges("plan_actions", route_after_plan)
     wf.add_edge("human_approve", END)  # L2 路径: 暂停等审批

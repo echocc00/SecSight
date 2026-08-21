@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     # mock_mode=False 时,LLM 走真实;retriever/executor 仍需各自 enable 才用真实
     enable_qdrant: bool = Field(default=False, alias="ENABLE_QDRANT")
     enable_shuffle: bool = Field(default=False, alias="ENABLE_SHUFFLE")
+    # 情报源: mock_mode=False 且 enable_threat_intel=True 时用真实 AbuseIPDB+OTX
+    enable_threat_intel: bool = Field(default=False, alias="ENABLE_THREAT_INTEL")
+    abuseipdb_api_key: str = Field(default="", alias="ABUSEIPDB_API_KEY")
+    otx_api_key: str = Field(default="", alias="OTX_API_KEY")
+    threat_intel_timeout_seconds: int = Field(default=10, alias="THREAT_INTEL_TIMEOUT_SECONDS")
+    # 真实情报失败 → 降级 mock (保证闭环)
+    threat_intel_fallback_to_mock: bool = Field(default=True, alias="THREAT_INTEL_FALLBACK_TO_MOCK")
 
     # OpenSearch
     opensearch_url: str = Field(

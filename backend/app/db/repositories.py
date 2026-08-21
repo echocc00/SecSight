@@ -72,6 +72,13 @@ class CaseRepository:
             model.updated_at = datetime.utcnow()
             await self.session.commit()
 
+    async def update_enriched_context(self, case_id: str, context: dict) -> None:
+        model = await self.session.get(CaseModel, case_id)
+        if model:
+            model.enriched_context = context
+            model.updated_at = datetime.utcnow()
+            await self.session.commit()
+
     async def update_actions(self, case_id: str, actions: list[Action]) -> None:
         model = await self.session.get(CaseModel, case_id)
         if model:

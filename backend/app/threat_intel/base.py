@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import httpx
+
 from app.models.schemas import IntelResult
 
 
@@ -15,6 +17,8 @@ class ThreatIntelProvider(ABC):
 
     name: str = "base"
     is_paid: bool = False  # 付费 provider 标记
+    # 该 provider 支持的查询类型 (用于多源聚合时跳过不支持的)
+    supports: tuple[str, ...] = ("ip", "domain", "file_hash", "url")
 
     @abstractmethod
     async def query_ip(self, ip: str) -> IntelResult: ...
@@ -29,58 +33,149 @@ class ThreatIntelProvider(ABC):
     async def query_url(self, url: str) -> IntelResult: ...
 
 
+class ThreatIntelError(Exception):
+    """情报查询失败 (触发降级)"""
+    pass
+
+
 # ============ Phase1 免费源实现 ============
 
 
 class AbuseIPDBProvider(ThreatIntelProvider):
-    """AbuseIPDB (免费,IP 信誉)"""
+    """AbuseIPDB (免费,仅 IP 信誉)
+
+    API: GET /api/v2/check?ipAddress=x&maxAgeInDays=90
+    返回 abuseConfidenceScore (0-100) + isWhitelisted + usageType
+    """
 
     name = "abuseipdb"
-    is_paid = False
+    supports = ("ip",)  # 仅支持 IP
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, timeout: int = 10) -> None:
+        if not api_key:
+            raise ThreatIntelError("AbuseIPDB api_key 未配置")
         self.api_key = api_key
         self.base_url = "https://api.abuseipdb.com/api/v2"
+        self.timeout = timeout
 
     async def query_ip(self, ip: str) -> IntelResult:
-        # TODO: httpx 调用 AbuseIPDB check endpoint
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(
+                    f"{self.base_url}/check",
+                    params={"ipAddress": ip, "maxAgeInDays": 90, "verbose": True},
+                    headers={"Key": self.api_key, "Accept": "application/json"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:  # noqa: BLE001
+            raise ThreatIntelError(f"AbuseIPDB 查询失败: {e}") from e
+
+        score = data.get("abuseConfidenceScore", 0)
+        is_whitelisted = data.get("isWhitelisted", False)
+        usage = data.get("usageType", "")
+        domain = data.get("domain", "")
+
+        # score 0-100 → confidence 0-1;>50 视为恶意
+        confidence = min(score / 100, 1.0)
+        malicious = score >= 50 and not is_whitelisted
+        tags = []
+        if usage:
+            tags.append(usage.lower())
+        if domain:
+            tags.append(f"domain:{domain}")
+
         return IntelResult(
             indicator=ip,
             indicator_type="ip",
             provider=self.name,
+            confidence=confidence,
+            malicious=malicious,
+            tags=tags,
+            raw=data,
         )
 
     async def query_domain(self, domain: str) -> IntelResult:
-        return IntelResult(indicator=domain, indicator_type="domain", provider=self.name)
+        raise ThreatIntelError("AbuseIPDB 不支持 domain 查询")
 
     async def query_file_hash(self, hash: str) -> IntelResult:
-        return IntelResult(indicator=hash, indicator_type="file_hash", provider=self.name)
+        raise ThreatIntelError("AbuseIPDB 不支持 file_hash 查询")
 
     async def query_url(self, url: str) -> IntelResult:
-        return IntelResult(indicator=url, indicator_type="url", provider=self.name)
+        raise ThreatIntelError("AbuseIPDB 不支持 url 查询")
 
 
 class OTXProvider(ThreatIntelProvider):
-    """AlienVault OTX (免费,TAXII 2.1 拉取)"""
+    """AlienVault OTX (免费,支持 IP/domain/hash/url)
+
+    API:
+      GET /api/v1/indicators/ip/{ip}/general
+      GET /api/v1/indicators/domain/{domain}/general
+      GET /api/v1/indicators/file/{hash}/general
+      GET /api/v1/indicators/url/{url}/general
+    返回 pulse_count (关联情报数),pulse_count>0 视为可疑
+    """
 
     name = "otx"
-    is_paid = False
+    supports = ("ip", "domain", "file_hash", "url")
 
-    def __init__(self, api_key: str) -> None:
-        self.api_key = api_key
+    def __init__(self, api_key: str, timeout: int = 10) -> None:
+        self.api_key = api_key  # OTX 大部分 endpoint 无需 key,有则更高速率
         self.base_url = "https://otx.alienvault.com/api/v1"
+        self.timeout = timeout
+
+    async def _query_indicator(self, indicator_type: str, value: str) -> IntelResult:
+        type_map = {
+            "ip": "ip",
+            "domain": "domain",
+            "file_hash": "file",
+            "url": "url",
+        }
+        otx_type = type_map.get(indicator_type, indicator_type)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.get(
+                    f"{self.base_url}/indicators/{otx_type}/{value}/general",
+                    headers={"X-OTX-API-KEY": self.api_key} if self.api_key else {},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:  # noqa: BLE001
+            raise ThreatIntelError(f"OTX 查询失败: {e}") from e
+
+        pulse_count = data.get("pulse_count", 0)
+        # pulse_count 越多置信度越高;>3 视为恶意
+        confidence = min(pulse_count / 10, 1.0)
+        malicious = pulse_count >= 3
+
+        # 提取 TTP (OTX pulses 里的 adversary TTPs)
+        ttps: list[str] = []
+        for pulse in (data.get("pulses", []) or [])[:5]:
+            for ttp in (pulse.get("adversary_ttps") or []):
+                ttps.append(ttp)
+
+        return IntelResult(
+            indicator=value,
+            indicator_type=indicator_type,
+            provider=self.name,
+            confidence=confidence,
+            malicious=malicious,
+            tags=[f"pulse_count:{pulse_count}"] if pulse_count else [],
+            mitre_ttps=ttps,
+            raw={"pulse_count": pulse_count},
+        )
 
     async def query_ip(self, ip: str) -> IntelResult:
-        return IntelResult(indicator=ip, indicator_type="ip", provider=self.name)
+        return await self._query_indicator("ip", ip)
 
     async def query_domain(self, domain: str) -> IntelResult:
-        return IntelResult(indicator=domain, indicator_type="domain", provider=self.name)
+        return await self._query_indicator("domain", domain)
 
     async def query_file_hash(self, hash: str) -> IntelResult:
-        return IntelResult(indicator=hash, indicator_type="file_hash", provider=self.name)
+        return await self._query_indicator("file_hash", hash)
 
     async def query_url(self, url: str) -> IntelResult:
-        return IntelResult(indicator=url, indicator_type="url", provider=self.name)
+        return await self._query_indicator("url", url)
 
 
 class MISPCommunityProvider(ThreatIntelProvider):

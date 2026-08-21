@@ -122,6 +122,56 @@ async def retrieve_knowledge_node(state: dict) -> dict:
     return state
 
 
+async def enrich_ioc_node(state: dict) -> dict:
+    """节点: 提取告警 IoC,多源情报富化,结果进 enriched_context
+
+    真实模式 (enable_threat_intel=True): 查 AbuseIPDB+OTX,合成置信度
+    mock 模式: 返回预设矿池/恶意 IP 结果
+    单 IoC 失败不影响整体,全失败降级 mock
+    """
+    from app.threat_intel.service import get_threat_intel_service
+
+    service = get_threat_intel_service()
+    alerts = state.get("raw_alerts", [])
+    enriched: dict = dict(state.get("enriched_context") or {})
+
+    ioc_summary: list[dict] = []
+    for alert in alerts[:3]:  # 取前 3 条告警的 IoC
+        results = await service.enrich_alert(alert)
+        for key, res in results.items():
+            ioc_summary.append(
+                {
+                    "ioc": key,
+                    "provider": res.provider,
+                    "confidence": res.confidence,
+                    "malicious": res.malicious,
+                    "ttps": res.mitre_ttps,
+                    "tags": res.tags,
+                }
+            )
+
+    enriched["iocs"] = ioc_summary
+    state["enriched_context"] = enriched
+
+    # 持久化到 Case
+    async with async_session() as session:
+        repo = CaseRepository(session)
+        await repo.update_enriched_context(state["case_id"], enriched)
+        await _audit(
+            "ioc_enriched",
+            "threat_intel",
+            state["case_id"],
+            {"ioc_count": len(ioc_summary)},
+        )
+
+    log.info(
+        "node.enrich_ioc",
+        case_id=state["case_id"],
+        iocs_enriched=len(ioc_summary),
+    )
+    return state
+
+
 async def analyze_node(state: dict) -> dict:
     """节点: mock LLM 输出结构化研判报告"""
     llm = get_llm()

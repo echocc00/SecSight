@@ -84,6 +84,13 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 - 健壮解析: schema 驱动枚举约束 + 归一化器 (severity 大小写/true_positive 布尔/kill_chain_phase list/置信度/截断 JSON)
 - 组件解耦: LLM/检索/执行各自独立开关 (SECSIGHT_MOCK_MODE / ENABLE_QDRANT / ENABLE_SHUFFLE)
 
+**威胁情报接入** (ENABLE_THREAT_INTEL=true):
+- 免费源: AbuseIPDB (IP 信誉) + OTX (IP/域名/hash/url,无 key 也可用)
+- 多源聚合: 并行查询 + 置信度合成 (多源命中 0.7+,单源 0.4)
+- IoC 自动提取: 从告警提取 IP/域名/hash,内网 IP/API 域名过滤
+- 故障降级: 真实 API 失败自动回退 mock
+- workflow 接入: enrich_ioc 节点 (retrieve→enrich→analyze),情报进 LLM prompt
+
 **已验证剧本** (mock 端到端):
 | 剧本 | MITRE | L2 审批 | 自动闭环 |
 |---|---|---|---|
