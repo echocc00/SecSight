@@ -44,13 +44,28 @@ class SecSightState(TypedDict, total=False):
     current_playbook_id: str | None
 
 
+# ============ 路由函数 ============
+
+
+def route_after_plan(state: SecSightState) -> str:
+    """plan_actions 后路由:
+
+    有 L2 待审批动作 → human_approve (暂停等审批,走 resume)
+    无 L2 动作 (全 L3/L4/L5) → execute (自动闭环)
+    """
+    actions = state.get("proposed_actions", [])
+    has_l2 = any(a.get("autonomy_level") == AutonomyLevel.L2.value for a in actions)
+    return "human_approve" if has_l2 else "execute"
+
+
 # ============ 前半段 workflow: trigger ============
 
 
 def build_trigger_workflow():
-    """ingest → retrieve → analyze → plan → human_approve(标记pending) → END
+    """ingest → retrieve → analyze → plan → [路由]
 
-    到 human_approve 节点标记 Case 为 pending_approval 后结束,等待外部审批。
+    有 L2 → human_approve(标记pending) → END (等外部审批,走 resume)
+    无 L2 → execute → update_case → END (自动闭环)
     """
     wf = StateGraph(SecSightState)
     wf.add_node("ingest_alerts", ingest_alerts_node)
@@ -58,13 +73,17 @@ def build_trigger_workflow():
     wf.add_node("analyze", analyze_node)
     wf.add_node("plan_actions", plan_actions_node)
     wf.add_node("human_approve", human_approve_node)
+    wf.add_node("execute", execute_node)
+    wf.add_node("update_case", update_case_node)
 
     wf.set_entry_point("ingest_alerts")
     wf.add_edge("ingest_alerts", "retrieve_knowledge")
     wf.add_edge("retrieve_knowledge", "analyze")
     wf.add_edge("analyze", "plan_actions")
-    wf.add_edge("plan_actions", "human_approve")
-    wf.add_edge("human_approve", END)
+    wf.add_conditional_edges("plan_actions", route_after_plan)
+    wf.add_edge("human_approve", END)  # L2 路径: 暂停等审批
+    wf.add_edge("execute", "update_case")  # 无 L2 路径: 自动执行
+    wf.add_edge("update_case", END)
     return wf.compile()
 
 

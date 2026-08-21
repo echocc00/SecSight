@@ -36,9 +36,18 @@ async def _audit(action: str, actor: str, case_id: str, detail: dict | None = No
 
 
 def build_analysis_prompt(case_data: dict, knowledge: list[dict]) -> list[dict]:
-    """构造研判 prompt"""
-    alerts_summary = json.dumps(case_data.get("alerts", [])[:5], ensure_ascii=False)
+    """构造研判 prompt (场景由告警内容推断,不硬编码)"""
+    alerts = case_data.get("alerts", [])
+    alerts_summary = json.dumps(alerts[:5], ensure_ascii=False)
     knowledge_ctx = json.dumps(knowledge, ensure_ascii=False)
+    # 从首个告警提取场景线索 (message + MITRE 技术),供 LLM/场景检测使用
+    scene_hint = ""
+    if alerts:
+        a0 = alerts[0]
+        scene_hint = (
+            f"告警消息: {a0.get('message','')}; "
+            f"MITRE技术: {', '.join(a0.get('mitre_techniques',[]))}"
+        )
     return [
         {
             "role": "system",
@@ -52,7 +61,7 @@ def build_analysis_prompt(case_data: dict, knowledge: list[dict]) -> list[dict]:
             "content": (
                 f"【告警】\n{alerts_summary}\n\n"
                 f"【检索知识】\n{knowledge_ctx}\n\n"
-                f"场景: cryptominer (xmrig 进程 + 矿池连接)"
+                f"【场景线索】{scene_hint}"
             ),
         },
     ]

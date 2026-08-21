@@ -1,0 +1,92 @@
+# 关键服务崩溃应急 (Phase1 第6优先级)
+# MITRE: TA0040 Impact + T1489 Service Stop
+
+id: pb_service_crash_v1
+name: 关键服务崩溃应急响应
+category: application
+priority: P0
+phase: 1
+version: "1.0"
+autonomy_level_default: L3
+
+description: |
+  业务影响: 关键业务服务被 kill/崩溃 → 业务中断。
+  检测源: Wazuh 进程监控 + 服务健康检查 + Sysmon 进程终止。
+
+triggers:
+  sigma_rules:
+    - critical_service_stopped
+    - process_killed_signal
+  wazuh_rules:
+    - "service_down"
+    - "591"     # process ended
+  process_patterns:
+    names: []
+    cmdline_contains:
+      - "kill -9"
+      - "systemctl stop"
+  indicators:
+    commands:
+      - "kill -9"
+      - "systemctl stop"
+      - "pkill"
+
+mitre_mapping:
+  tactics: [TA0040 Impact]
+  techniques:
+    - T1489 Service Stop
+    - T1499 Endpoint Denial of Service
+
+investigation_steps:
+  - id: I1
+    name: 崩溃原因分析 (OOM/kill/异常)
+    tools: [sysmon_process_termination, dmesg_query]
+    autonomy: L4
+    output: crash_cause
+  - id: I2
+    name: 是否恶意 kill
+    tools: [auditd_query, sysmon_parent_child]
+    autonomy: L4
+    output: is_malicious
+  - id: I3
+    name: 业务影响评估
+    tools: [cmdb_query_service, health_check]
+    autonomy: L4
+    output: business_impact
+
+containment_actions:
+  - id: A1_restart_service
+    name: 重启关键服务
+    action_type: service_restart
+    autonomy: L3
+    approval: key_decision
+    tools: [service_restart]
+  - id: A2_verify_health
+    name: 验证服务恢复 + 健康检查
+    action_type: query_asset
+    autonomy: L4
+    approval: sampling
+    tools: [health_check]
+  - id: A3_block_attacker
+    name: 若恶意 kill 则封禁来源
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [firewall_block_ip]
+  - id: A4_enable_watchdog
+    name: 启用服务守护 (systemd restart=always)
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [systemd_watchdog_configure]
+  - id: A5_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: []
+  ttps: [impact_techniques]

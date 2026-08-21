@@ -1,0 +1,96 @@
+# SSH 暴力破解应急响应 (Phase1 第4优先级)
+# MITRE: TA0006 Credential Access
+
+id: pb_bruteforce_v1
+name: SSH 暴力破解应急响应
+category: identity
+priority: P0
+phase: 1
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: 撞库/字典攻击,成功后可横向。
+  检测源: Wazuh auth 日志 (5710/5712) + CrowdSec。
+
+triggers:
+  sigma_rules:
+    - ssh_bruteforce
+    - multiple_auth_failures
+  wazuh_rules:
+    - "5710"     # Authentication failed
+    - "5712"     # SSH brute force
+    - "5720"     # Multiple authentication failures
+  process_patterns:
+    names: []
+    cmdline_contains: []
+  indicators:
+    commands: []
+
+mitre_mapping:
+  tactics: [TA0006 Credential Access, TA0001 Initial Access]
+  techniques:
+    - T1110 Brute Force
+    - T1110.001 Password Guessing
+    - T1021.004 SSH
+
+investigation_steps:
+  - id: I1
+    name: 失败次数统计
+    tools: [wazuh_auth_log_query]
+    autonomy: L4
+    output: failure_count
+  - id: I2
+    name: 源 IP 情报富化
+    tools: [opencti_query, abuseipdb_query, otx_query]
+    autonomy: L4
+    output: src_ip_intel
+  - id: I3
+    name: 成功登录检查
+    tools: [wazuh_auth_log_query]
+    autonomy: L4
+    output: successful_login
+
+containment_actions:
+  - id: A1_block_ip
+    name: 封禁攻击源 IP (防火墙/CrowdSec)
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [firewall_block_ip, crowdsec_bouncer_block]
+  - id: A2_freeze_account
+    name: 若已入侵则冻结账户
+    action_type: freeze_account
+    autonomy: L2
+    approval: double
+    risk: critical
+    tools: [iam_freeze_account]
+  - id: A3_force_password_reset
+    name: 强制重置受影响账户密码
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [iam_password_reset, notify]
+  - id: A4_enable_mfa
+    name: 启用/强制 MFA
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [iam_enable_mfa, notify]
+  - id: A5_rate_limit
+    name: SSH 登录限速 (fail2ban/maxretry)
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [fail2ban_configure]
+  - id: A6_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [malicious_ips]
+  ttps: [bruteforce_techniques]

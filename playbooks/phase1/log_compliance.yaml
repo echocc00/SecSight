@@ -1,0 +1,93 @@
+# 日志合规/服务中断应急 (Phase1 第5优先级)
+# MITRE: T1562 Impair Defenses (日志被停) + 等保日志留存合规
+
+id: pb_log_compliance_v1
+name: 日志合规/采集中断应急
+category: data
+priority: P0
+phase: 1
+version: "1.0"
+autonomy_level_default: L3
+
+description: |
+  业务影响: 日志断采 → 等保合规风险 (日志需留存≥6个月) + 检测盲区。
+  检测源: Wazuh agent 心跳丢失 + Vector 采集断流。
+
+triggers:
+  sigma_rules:
+    - log_collection_stopped
+    - agent_disconnected
+  wazuh_rules:
+    - "agent_disconnected"
+    - "502"      # agent connection lost
+  process_patterns:
+    names: []
+    cmdline_contains: []
+  indicators:
+    commands:
+      - "systemctl stop rsyslog"
+      - "systemctl stop filebeat"
+      - "kill -9 filebeat"
+
+mitre_mapping:
+  tactics: [TA0005 Defense Evasion]
+  techniques:
+    - T1562 Impair Defenses
+    - T1562.008 Disable Cloud Logs
+    - T1070.001 Clear Windows Event Logs
+
+investigation_steps:
+  - id: I1
+    name: 断采时长与范围
+    tools: [vector_status_query, wazuh_agent_status]
+    autonomy: L4
+    output: outage_scope
+  - id: I2
+    name: 是否人为停止
+    tools: [auditd_query, sysmon_process_termination]
+    autonomy: L4
+    output: stop_reason
+  - id: I3
+    name: 日志缺口评估
+    tools: [opensearch_gap_query]
+    autonomy: L4
+    output: log_gap
+
+containment_actions:
+  - id: A1_restart_collector
+    name: 重启日志采集服务 (filebeat/rsyslog/agent)
+    action_type: service_restart
+    autonomy: L3
+    approval: key_decision
+    tools: [service_restart_collector]
+  - id: A2_verify_flow
+    name: 验证日志恢复流入
+    action_type: query_asset
+    autonomy: L4
+    approval: sampling
+    tools: [vector_status_query, opensearch_count_query]
+  - id: A3_backfill_gap
+    name: 评估日志缺口补采可行性
+    action_type: query_asset
+    autonomy: L3
+    approval: key_decision
+    tools: [log_backfill_assess]
+  - id: A4_alert_admin
+    name: 通知管理员 + 合规负责人
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [notify]
+  - id: A5_post_incident
+    name: 复盘 + 合规报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, compliance_note]
+
+knowledge_assets:
+  iocs: []
+  ttps: [defense_evasion_techniques]
+compliance:
+  dengbao_level: 3
+  log_retention_months: 6

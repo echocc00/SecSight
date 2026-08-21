@@ -47,26 +47,96 @@ PRESET_REPORTS: dict[str, JudgmentReport] = {
     "bruteforce": JudgmentReport(
         incident_summary="SSH 暴力破解,短时间内大量认证失败",
         severity=Severity.medium,
-        ttps=["T1110"],
-        kill_chain_phase="initial-access",
+        ttps=["T1110", "T1110.001"],
+        kill_chain_phase="credential-access",
+        true_positive="yes",
+        confidence=0.82,
+        recommended_actions=[
+            ActionType.block_ip,
+            ActionType.freeze_account,
+        ],
+        rationale="5 分钟内 247 次认证失败,源 IP 情报标记恶意,暂判定为撞库攻击。",
+        citations=["attck:T1110", "intel:45.10.0.1"],
+    ),
+    "persistence": JudgmentReport(
+        incident_summary="检测到 crontab 持久化植入,远程 payload 定时执行",
+        severity=Severity.high,
+        ttps=["T1053.003"],
+        kill_chain_phase="persistence",
+        true_positive="yes",
+        confidence=0.86,
+        recommended_actions=[
+            ActionType.isolate_host,
+            ActionType.kill_process,
+            ActionType.quarantine_file,
+        ],
+        rationale="crontab 新增每分钟 curl|bash 远程脚本执行,典型持久化后门,需清除并排查横向。",
+        citations=["attck:T1053.003"],
+    ),
+    "log_compliance": JudgmentReport(
+        incident_summary="日志采集中断 18 分钟,agent 断连,存在检测盲区与合规风险",
+        severity=Severity.medium,
+        ttps=["T1562", "T1562.008"],
+        kill_chain_phase="defense-evasion",
         true_positive="uncertain",
-        confidence=0.65,
-        recommended_actions=[ActionType.block_ip],
-        rationale="5 分钟内 200+ 次认证失败,但无成功登录,暂判定为撞库尝试。",
-        citations=["attck:T1110"],
+        confidence=0.6,
+        recommended_actions=[
+            ActionType.service_restart,
+            ActionType.query_asset,
+        ],
+        rationale="filebeat agent 断连 18 分钟,需确认是故障还是人为停止,恢复采集并评估日志缺口。",
+        citations=["attck:T1562"],
+    ),
+    "service_crash": JudgmentReport(
+        incident_summary="关键服务 nginx 被 SIGKILL 终止,疑似恶意 kill,业务中断",
+        severity=Severity.high,
+        ttps=["T1489"],
+        kill_chain_phase="impact",
+        true_positive="yes",
+        confidence=0.8,
+        recommended_actions=[
+            ActionType.service_restart,
+            ActionType.query_asset,
+        ],
+        rationale="nginx 被 kill -9 终止,来源进程/用户未知,需重启恢复并排查是否恶意,必要时封禁来源。",
+        citations=["attck:T1489"],
     ),
 }
 
 
 def _detect_scenario(messages: list[dict]) -> str:
-    """从 prompt 内容推断场景类型"""
+    """从 prompt 内容推断场景类型
+
+    优先按告警自带 MITRE 技术 ID 精确判定 (不受召回知识污染),
+    关键词作兜底。
+    """
     text = " ".join(str(m.get("content", "")) for m in messages).lower()
-    if "xmrig" in text or "stratum" in text or "mining" in text or "t1496" in text:
+    # 技术 ID 精确匹配 (告警 scene_hint 携带)
+    if "t1496" in text:
         return "cryptominer"
-    if "ransomware" in text or "encrypt" in text or "t1486" in text:
+    if "t1486" in text:
         return "ransomware"
-    if "brute" in text or "ssh" in text or "t1110" in text:
+    if "t1110" in text:
         return "bruteforce"
+    if "t1053" in text:
+        return "persistence"
+    if "t1562" in text:
+        return "log_compliance"
+    if "t1489" in text:
+        return "service_crash"
+    # 关键词兜底
+    if "xmrig" in text or "stratum" in text or "mining" in text:
+        return "cryptominer"
+    if "ransomware" in text or "encrypt" in text:
+        return "ransomware"
+    if "brute" in text or "authentication fail" in text:
+        return "bruteforce"
+    if "crontab" in text or "authorized_keys" in text:
+        return "persistence"
+    if "log collection" in text or "filebeat" in text:
+        return "log_compliance"
+    if "sigkill" in text or "kill -9" in text:
+        return "service_crash"
     return "cryptominer"  # 默认
 
 

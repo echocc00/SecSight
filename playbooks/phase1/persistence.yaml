@@ -1,0 +1,110 @@
+# 持久化机制检测与清除 (Phase1 第3优先级)
+# MITRE: TA0003 Persistence
+
+id: pb_persistence_v1
+name: 持久化机制检测与清除
+category: host
+priority: P0
+phase: 1
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: 攻击者植入后门/计划任务,即使重启仍存活。
+  检测源: Wazuh FIM 监控 crontab/systemd/rc.local + Sysmon 进程创建。
+
+triggers:
+  sigma_rules:
+    - suspicious_crontab_modification
+    - suspicious_systemd_service_creation
+    - rc_local_modification
+  wazuh_rules:
+    - "550"      # FIM
+    - "5710"     # Suspicious
+  process_patterns:
+    names: []
+    cmdline_contains:
+      - "crontab -e"
+      - "systemctl enable"
+      - "echo */1 * * * *"
+  indicators:
+    commands:
+      - "crontab"
+      - "systemctl enable"
+      - "/etc/rc.local"
+      - "/etc/init.d"
+      - "authorized_keys"
+
+mitre_mapping:
+  tactics: [TA0003 Persistence]
+  techniques:
+    - T1053.003 Cron
+    - T1547.001 Registry Run Keys / Startup Folder
+    - T1098 Account Manipulation
+
+investigation_steps:
+  - id: I1
+    name: 持久化点枚举
+    tools: [osquery_cron, osquery_systemd, file_integrity_check]
+    autonomy: L4
+    output: persistence_points
+  - id: I2
+    name: 可疑进程关联
+    tools: [sysmon_parent_child, osquery_processes]
+    autonomy: L4
+    output: suspicious_processes
+  - id: I3
+    name: 授权密钥检查
+    tools: [osquery_authorized_keys]
+    autonomy: L4
+    output: injected_keys
+
+containment_actions:
+  - id: A1_isolate_host
+    name: 隔离主机 (保留 SSH)
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    tools: [firewall_block_host, wazuh_active_response_isolate]
+    parameters: { mode: network_only, keep_ssh: true }
+  - id: A2_kill_process
+    name: kill 可疑进程
+    action_type: kill_process
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_kill]
+  - id: A3_remove_crontab
+    name: 清除恶意 crontab 条目
+    action_type: quarantine_file
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_clean]
+  - id: A4_disable_systemd
+    name: 禁用恶意 systemd service
+    action_type: quarantine_file
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_clean]
+  - id: A5_remove_ssh_keys
+    name: 移除注入的 authorized_keys
+    action_type: quarantine_file
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [wazuh_active_response_clean]
+  - id: A6_lateral_scan
+    name: 横向扫描互信主机
+    action_type: query_asset
+    autonomy: L4
+    approval: sampling
+    tools: [wazuh_group_scan]
+  - id: A7_post_incident
+    name: 复盘报告 + 知识沉淀
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs: [process_hashes, injected_keys]
+  ttps: [persistence_techniques]

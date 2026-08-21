@@ -48,6 +48,42 @@ _MOCK_KNOWLEDGE: list[dict] = [
         "iocs": ["xmrig hash", "pool.supportxmr.com", "192.168.64.1"],
         "lessons": "清理 crontab + systemd 双持久化点,封矿池域名。",
     },
+    {
+        "id": "attck:T1053.003",
+        "type": "technique",
+        "name": "Cron",
+        "tactic": "TA0003 Persistence",
+        "description": "利用 cron 定时任务实现持久化,定时执行恶意脚本。",
+        "detection": "FIM 监控 /var/spool/cron + crontab 修改 + curl|bash 定时任务",
+        "mitigation": "清除恶意 crontab 条目 + 隔离主机 + 排查横向",
+    },
+    {
+        "id": "attck:T1110",
+        "type": "technique",
+        "name": "Brute Force",
+        "tactic": "TA0006 Credential Access",
+        "description": "暴力破解/撞库获取凭据,SSH/RDP 常见。",
+        "detection": "短时间大量认证失败 (Wazuh 5710/5712) + 源 IP 情报",
+        "mitigation": "封禁源 IP + 冻结账户 + 强制 MFA + 登录限速",
+    },
+    {
+        "id": "attck:T1562",
+        "type": "technique",
+        "name": "Impair Defenses",
+        "tactic": "TA0005 Defense Evasion",
+        "description": "削弱/禁用防御,如停止日志采集、关闭 EDR。",
+        "detection": "agent 断连 + 日志断流 + 采集服务被停止",
+        "mitigation": "重启采集服务 + 验证日志恢复 + 评估缺口",
+    },
+    {
+        "id": "attck:T1489",
+        "type": "technique",
+        "name": "Service Stop",
+        "tactic": "TA0040 Impact",
+        "description": "停止关键服务造成业务中断。",
+        "detection": "关键进程被 SIGKILL + systemctl stop + 服务健康检查失败",
+        "mitigation": "重启服务 + 排查恶意来源 + 启用守护",
+    },
 ]
 
 
@@ -65,7 +101,14 @@ class MockRetriever(KnowledgeRetriever):
         for chunk in _MOCK_KNOWLEDGE:
             score = 0.0
             blob = (chunk.get("name", "") + " " + chunk.get("description", "") + " " + chunk.get("id", "")).lower()
-            keywords = ["xmrig", "mining", "stratum", "t1496", "t1071", "cryptominer", "ransomware", "t1486", "encrypt"]
+            keywords = [
+                "xmrig", "mining", "stratum", "t1496", "t1071", "cryptominer",
+                "ransomware", "t1486", "encrypt",
+                "crontab", "t1053", "persistence", "cron",
+                "brute", "t1110", "authentication",
+                "log collection", "t1562", "filebeat", "agent",
+                "service", "t1489", "sigkill", "nginx",
+            ]
             for kw in keywords:
                 if kw in text and kw in blob:
                     score += 1.0

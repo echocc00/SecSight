@@ -13,11 +13,25 @@ class PlaybookEngine:
         self.playbooks: list[Playbook] = load_all(playbooks_dir)
 
     def match(self, alert: Alert) -> Playbook | None:
-        """匹配剧本: 命中任一 trigger 即候选,按 priority 选最优"""
-        candidates = [pb for pb in self.playbooks if self._match_triggers(alert, pb)]
-        if not candidates:
+        """评分匹配: 命中 trigger 计分,选最高分剧本。
+
+        评分权重 (越具体越高):
+          sigma_id 精确匹配 = 10
+          进程名/命令行模式 = 8
+          indicators 命令 = 6
+          网络模式 = 5
+          wazuh rule (泛化,易误配) = 2
+        """
+        scored: list[tuple[int, Playbook]] = []
+        for pb in self.playbooks:
+            score = self._score(alert, pb)
+            if score > 0:
+                scored.append((score, pb))
+        if not scored:
             return None
-        return sorted(candidates, key=lambda p: _PRIORITY_ORDER.get(p.priority, 9))[0]
+        # 同分时按 priority (P0 优先),再按加载顺序稳定
+        scored.sort(key=lambda x: (-x[0], _PRIORITY_ORDER.get(x[1].priority, 9)))
+        return scored[0][1]
 
     def get_by_id(self, playbook_id: str) -> Playbook | None:
         for pb in self.playbooks:
@@ -25,42 +39,43 @@ class PlaybookEngine:
                 return pb
         return None
 
-    def _match_triggers(self, alert: Alert, playbook: Playbook) -> bool:
+    def _score(self, alert: Alert, playbook: Playbook) -> int:
         triggers = playbook.triggers
-        # Wazuh rule ID 匹配
-        if str(alert.rule_id) in triggers.wazuh_rules:
-            return True
-        # Sigma rule 匹配 (alert.raw 里可能带 sigma_id)
+        score = 0
+        raw_str = str(alert.raw).lower()
+        message = (alert.message or "").lower()
+
+        # sigma_id 精确匹配 (最具体)
         sigma_id = alert.raw.get("sigma_id", "")
         if sigma_id and sigma_id in triggers.sigma_rules:
-            return True
-        # 进程名/命令行模式匹配 (挖矿等)
+            score += 10
+        # 进程名/命令行模式
         if triggers.process_patterns:
             names = triggers.process_patterns.get("names", [])
             cmdline_contains = triggers.process_patterns.get("cmdline_contains", [])
-            message = (alert.message or "").lower()
-            raw_str = str(alert.raw).lower()
             for name in names:
                 if name.lower() in raw_str or name.lower() in message:
-                    return True
+                    score += 8
             for pattern in cmdline_contains:
                 if pattern.lower() in raw_str:
-                    return True
-        # 网络模式匹配 (矿池端口/域名)
+                    score += 8
+        # indicators 命令/后缀
+        if triggers.indicators:
+            commands = triggers.indicators.get("commands", [])
+            for cmd in commands:
+                if cmd.lower() in raw_str:
+                    score += 6
+        # 网络模式
         if triggers.network:
             pool_ports = triggers.network.get("pool_ports", [])
             if alert.dst_ip and any(
                 str(port) in str(alert.raw.get("dst_port", "")) for port in pool_ports
             ):
-                return True
-        # indicators (文件后缀/命令)
-        if triggers.indicators:
-            commands = triggers.indicators.get("commands", [])
-            raw_str = str(alert.raw).lower()
-            for cmd in commands:
-                if cmd.lower() in raw_str:
-                    return True
-        return False
+                score += 5
+        # wazuh rule (泛化,低权重)
+        if str(alert.rule_id) in triggers.wazuh_rules:
+            score += 2
+        return score
 
 
 # 单例 (playbooks 目录: 优先环境变量,默认相对 backend 的 ../playbooks)
