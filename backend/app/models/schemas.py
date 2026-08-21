@@ -79,7 +79,7 @@ class JudgmentReport(BaseModel):
     """研判报告 (Tier2 输出,强制结构化)"""
     incident_summary: str = Field(max_length=200)
     severity: Severity
-    ttps: list[str] = Field(max_items=10)  # ATT&CK 白名单,RAG 召回才能填
+    ttps: list[str] = Field(default_factory=list, max_length=10)  # ATT&CK 白名单,RAG 召回才能填
     kill_chain_phase: str = ""
     true_positive: str = "uncertain"  # yes | no | uncertain
     confidence: float = Field(ge=0.0, le=1.0)

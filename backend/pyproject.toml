@@ -66,3 +66,26 @@ dev = [
 # ⚠️ License 隔离约束 (见 AGENTS.md):
 # 禁止安装: shuffle-sdk / wazuh-sdk / velociraptor / iris-modules(AGPL)
 # 仅通过 HTTP 调用这些独立服务
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra --strict-markers"
+markers = [
+    "unit: 纯逻辑单元测试 (无 DB/网络)",
+    "integration: 需要 DB/API 的集成测试",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "app/main.py",        # ASGI 入口
+    "app/db/database.py", # engine 初始化
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = false
