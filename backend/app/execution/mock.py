@@ -70,6 +70,7 @@ class ShuffleExecutor(ActionExecutor):
 def get_executor() -> ActionExecutor:
     from app.core.config import settings
 
-    if settings.mock_mode:
+    # 仅当 mock_mode=False 且显式启用 Shuffle 才用真实执行
+    if settings.mock_mode or not settings.enable_shuffle:
         return MockExecutor()
     return ShuffleExecutor()

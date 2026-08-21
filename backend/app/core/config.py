@@ -44,9 +44,26 @@ class Settings(BaseSettings):
     model_tier2: str = Field(default="tier2", alias="LITELLM_MODEL_TIER2")
     model_tier3: str = Field(default="tier3", alias="LITELLM_MODEL_TIER3")
 
+    # 真实 LLM provider 选择 (mock_mode=False 时生效)
+    # minimax = MiniMax 直连 (OpenAI 兼容); litellm = 经 LiteLLM 网关
+    llm_provider: str = Field(default="minimax", alias="LLM_PROVIDER")
+    minimax_api_key: str = Field(default="", alias="MINIMAX_API_KEY")
+    minimax_base_url: str = Field(
+        default="https://api.minimax.chat/v1", alias="MINIMAX_BASE_URL"
+    )
+    minimax_model: str = Field(default="abab6.5s-chat", alias="MINIMAX_MODEL")
+    llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
+    # 真 LLM 故障/超时 → 降级回 mock 预设报告 (保证闭环不断)
+    llm_fallback_to_mock: bool = Field(default=True, alias="LLM_FALLBACK_TO_MOCK")
+
     # 合规: 强制境内 LLM
     require_domestic_llm: bool = Field(default=True, alias="REQUIRE_DOMESTIC_LLM")
     pii_redaction_enabled: bool = Field(default=True, alias="PII_REDACTION_ENABLED")
+
+    # 各组件真实后端启用开关 (独立于 mock_mode,后端就绪才开)
+    # mock_mode=False 时,LLM 走真实;retriever/executor 仍需各自 enable 才用真实
+    enable_qdrant: bool = Field(default=False, alias="ENABLE_QDRANT")
+    enable_shuffle: bool = Field(default=False, alias="ENABLE_SHUFFLE")
 
     # OpenSearch
     opensearch_url: str = Field(

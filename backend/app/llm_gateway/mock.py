@@ -171,11 +171,36 @@ class MockLLMGateway:
 
 
 def get_llm():
-    """LLM 网关工厂: mock_mode → MockLLMGateway,否则真实 LLMGateway"""
+    """LLM 网关工厂
+
+    mock_mode=True  → MockLLMGateway (预设报告,无需 key)
+    mock_mode=False → ResilientLLMGateway (真 LLM 主 + 故障降级 mock)
+                      provider 由 settings.llm_provider 决定 (minimax | litellm)
+    """
     from app.core.config import settings
 
     if settings.mock_mode:
         return MockLLMGateway()
-    from app.llm_gateway.client import LLMGateway
 
-    return LLMGateway()
+    from app.llm_gateway.provider import RealLLMProvider
+    from app.llm_gateway.resilient import ResilientLLMGateway
+
+    if settings.llm_provider == "litellm":
+        real = RealLLMProvider(
+            base_url=settings.litellm_base_url,
+            api_key=settings.litellm_master_key,
+            model=settings.model_tier2,
+            timeout=settings.llm_timeout_seconds,
+        )
+    else:  # minimax 直连 (默认)
+        real = RealLLMProvider(
+            base_url=settings.minimax_base_url,
+            api_key=settings.minimax_api_key,
+            model=settings.minimax_model,
+            timeout=settings.llm_timeout_seconds,
+        )
+    return ResilientLLMGateway(
+        real=real,
+        fallback=MockLLMGateway(),
+        fallback_enabled=settings.llm_fallback_to_mock,
+    )

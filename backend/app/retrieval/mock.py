@@ -138,6 +138,7 @@ class QdrantRetriever(KnowledgeRetriever):
 def get_retriever() -> KnowledgeRetriever:
     from app.core.config import settings
 
-    if settings.mock_mode:
+    # 仅当 mock_mode=False 且显式启用 Qdrant 才用真实检索
+    if settings.mock_mode or not settings.enable_qdrant:
         return MockRetriever()
     return QdrantRetriever()  # Phase2 实现后切换

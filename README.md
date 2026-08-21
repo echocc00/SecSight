@@ -76,7 +76,13 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚧 Phase1 开发中 — 垂直切片已跑通,6 个 P0 剧本全部接线 (挖矿/勒索/持久化/暴破/日志合规/服务崩溃),mock 全栈端到端验证通过。
+🚧 Phase1 开发中 — 垂直切片已跑通,6 个 P0 剧本全部接线 (挖矿/勒索/持久化/暴破/日志合规/服务崩溃),mock 全栈端到端验证通过。**真实 LLM (MiniMax) 研判已接入并验证** (真 LLM 主 + 故障降级 mock)。测试覆盖率 90%。
+
+**LLM 接入** (mock_mode=false):
+- 真 LLM 主: MiniMax (OpenAI 兼容直连),研判由真实推理生成
+- 故障降级: LLM 调用/解析失败自动回退 mock,闭环不断
+- 健壮解析: schema 驱动枚举约束 + 归一化器 (severity 大小写/true_positive 布尔/kill_chain_phase list/置信度/截断 JSON)
+- 组件解耦: LLM/检索/执行各自独立开关 (SECSIGHT_MOCK_MODE / ENABLE_QDRANT / ENABLE_SHUFFLE)
 
 **已验证剧本** (mock 端到端):
 | 剧本 | MITRE | L2 审批 | 自动闭环 |
