@@ -69,3 +69,73 @@ async def inject_alert(
 async def list_alert_types() -> ApiResponse:
     """可用 mock 告警类型"""
     return ApiResponse(success=True, data={"types": list(MOCK_ALERTS.keys())})
+
+
+@router.post("/wazuh/poll", response_model=ApiResponse)
+async def poll_wazuh_alerts(
+    limit: int = 20,
+    session: AsyncSession = Depends(get_session),
+) -> ApiResponse:
+    """从 Wazuh 拉取最近告警 → 自动建 Case + 匹配剧本 + 触发编排
+
+    两种模式:
+      - 文件模式 (WAZUH_ALERTS_JSON 已设): 读 alerts.json
+      - API 模式: 查 Wazuh Manager API /security/events
+    """
+    from app.core.config import settings
+
+    alerts: list = []
+    try:
+        if settings.wazuh_alerts_json:
+            from app.integrations.wazuh import read_alerts_json
+
+            raw_alerts = read_alerts_json(settings.wazuh_alerts_json, max_alerts=limit)
+            alerts = raw_alerts
+        else:
+            from app.integrations.wazuh import WazuhClient
+
+            client = WazuhClient(
+                base_url=settings.wazuh_api_url,
+                username=settings.wazuh_api_user,
+                password=settings.wazuh_api_password,
+            )
+            alerts = await client.query_alerts(limit=limit)
+    except Exception as e:
+        return ApiResponse(success=False, error=f"Wazuh 接入失败: {e}")
+
+    if not alerts:
+        return ApiResponse(success=True, data={"polled": 0, "cases": []})
+
+    # 每条告警建 Case + 匹配剧本 + 触发编排
+    from app.db.repositories import CaseRepository
+    from app.models.schemas import CaseStatus
+    from app.playbooks.engine import engine as playbook_engine
+    from app.agents.workflow import trigger_workflow
+
+    repo = CaseRepository(session)
+    cases: list[dict] = []
+    for alert in alerts:
+        case = await repo.create_from_alert(alert)
+        playbook = playbook_engine.match(alert)
+        playbook_id = playbook.id if playbook else None
+        if playbook:
+            await repo.update_status(case.case_id, CaseStatus.investigating)
+            from app.db.models import CaseModel
+            model = await session.get(CaseModel, case.case_id)
+            if model:
+                model.playbook_id = playbook.id
+                await session.commit()
+        await trigger_workflow(case.case_id, playbook_id)
+        cases.append(
+            {
+                "case_id": case.case_id,
+                "playbook_id": playbook_id,
+                "severity": alert.severity.value,
+                "rule_id": alert.rule_id,
+            }
+        )
+
+    return ApiResponse(
+        success=True,
+        data={"polled": len(alerts), "cases": cases},
+    )

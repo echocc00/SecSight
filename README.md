@@ -91,6 +91,11 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 - 故障降级: 真实 API 失败自动回退 mock
 - workflow 接入: enrich_ioc 节点 (retrieve→enrich→analyze),情报进 LLM prompt
 
+**真实组件接入** (各自独立开关):
+- Qdrant RAG (ENABLE_QDRANT): numpy TF-IDF embedding + HNSW 向量检索,知识入库脚本
+- Shuffle SOAR (ENABLE_SHUFFLE): REST API 触发 Workflow,AGPL 隔离,action_type→workflow_id 映射
+- Wazuh 告警 (POST /api/alerts/wazuh/poll): API 查 /security/events 或读 alerts.json,归一化为 Alert→Case
+
 **已验证剧本** (mock 端到端):
 | 剧本 | MITRE | L2 审批 | 自动闭环 |
 |---|---|---|---|

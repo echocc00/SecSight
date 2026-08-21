@@ -56,15 +56,22 @@ class MockExecutor(ActionExecutor):
 
 
 class ShuffleExecutor(ActionExecutor):
-    """真实 Shuffle 执行 (Phase2 接入)
+    """真实 Shuffle 执行 — 实现在 execution/shuffle.py
 
-    实现: 调用 Shuffle REST API 触发 Workflow (不 import Shuffle 代码)
-      POST {SHUFFLE_BASE_URL}/api/v1/workflows/{workflow_id}/execute
-    License 隔离: AGPL-3.0,仅 HTTP 调用。
+    调 Shuffle REST API 触发 Workflow (AGPL 隔离,不 import Shuffle 代码)。
     """
 
     async def execute(self, action: Action) -> dict:
-        raise NotImplementedError("Shuffle executor 未实现,当前用 MockExecutor")
+        # 延迟导入避免强依赖
+        from app.core.config import settings
+        from app.execution.shuffle import ShuffleExecutor as _Real
+
+        real = _Real(
+            base_url=settings.shuffle_base_url,
+            api_key=settings.shuffle_api_key,
+            timeout=30,
+        )
+        return await real.execute(action)
 
 
 def get_executor() -> ActionExecutor:

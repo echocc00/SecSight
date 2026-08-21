@@ -122,17 +122,19 @@ class MockRetriever(KnowledgeRetriever):
 
 
 class QdrantRetriever(KnowledgeRetriever):
-    """真实 Qdrant 检索 (Phase2 接入)
+    """真实 Qdrant 检索 — 实现在 retrieval/qdrant_retriever.py
 
-    实现:
-      1. embedding = BGE-m3(query)
-      2. Qdrant HNSW search top_k=20
-      3. BGE-reranker-v2-m3 cross-encoder 截 top 5
-      4. 返回 chunks
+    流程: embedding(numpy TF-IDF) → Qdrant HNSW search → chunks
     """
 
     async def search(self, query: str | list[dict], top_k: int = 5) -> list[dict]:
-        raise NotImplementedError("Qdrant retriever 未实现,当前用 MockRetriever")
+        # 延迟导入避免 qdrant-client 强依赖 (mock 模式不需要)
+        from app.retrieval.qdrant_retriever import QdrantRetriever as _Real
+
+        from app.core.config import settings
+
+        real = _Real(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+        return await real.search(query, top_k)
 
 
 def get_retriever() -> KnowledgeRetriever:
@@ -141,4 +143,4 @@ def get_retriever() -> KnowledgeRetriever:
     # 仅当 mock_mode=False 且显式启用 Qdrant 才用真实检索
     if settings.mock_mode or not settings.enable_qdrant:
         return MockRetriever()
-    return QdrantRetriever()  # Phase2 实现后切换
+    return QdrantRetriever()

@@ -84,6 +84,17 @@ class Settings(BaseSettings):
         default="http://shuffle:3001", alias="SHUFFLE_BASE_URL"
     )
     shuffle_api_key: str = Field(default="", alias="SHUFFLE_API_KEY")
+    shuffle_workflow_map: str = Field(
+        default="{}", alias="SHUFFLE_WORKFLOW_MAP"
+    )  # JSON: {"isolate_host":"wf_id",...}
+
+    # Wazuh 告警源 (GPL 隔离,API/文件读取)
+    wazuh_api_url: str = Field(default="http://wazuh-manager:55000", alias="WAZUH_API_URL")
+    wazuh_api_user: str = Field(default="wazuh-wui", alias="WAZUH_API_USER")
+    wazuh_api_password: str = Field(default="", alias="WAZUH_API_PASSWORD")
+    wazuh_alerts_json: str = Field(
+        default="", alias="WAZUH_ALERTS_JSON"
+    )  # 文件模式: alerts.json 路径
     opencti_base_url: str = Field(
         default="http://opencti:8080", alias="OPENCTI_BASE_URL"
     )
