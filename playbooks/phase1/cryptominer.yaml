@@ -1,0 +1,122 @@
+# 挖矿病毒 (Phase1 第2优先级)
+# MITRE: TA0040 Impact + T1496 Resource Hijacking
+
+id: pb_cryptominer_v1
+name: 挖矿病毒应急响应
+category: host
+priority: P0
+phase: 1
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: CPU 占用 + 算力资损 + (若含其他恶意行为则升级)。
+  检测源: Wazuh 可疑进程/CPU异常 + Suricata 矿池域名/Stratum协议。
+
+triggers:
+  sigma_rules:
+    - suspicious_cryptominer_process
+    - cryptomining_stratum_protocol
+  wazuh_rules:
+    - "550"        # FIM
+    - "5710"       # Suspicious process
+  process_patterns:
+    names: [xmrig, minerd, kdevtmpfsi, kinsing, sys-mon, dbus-update]
+    cmdline_contains:
+      - "stratum+tcp://"
+      - "stratum+ssl://"
+      - "--cpu-max-threads-hint"
+      - "pool.minexmr.com"
+      - "pool.supportxmr.com"
+  network:
+    pool_ports: [3333, 4444, 5555, 7777, 8888, 14433]
+    protocols: [stratum]
+
+mitre_mapping:
+  tactics: [TA0040 Impact]
+  techniques:
+    - T1496 Resource Hijacking
+    - T1071.001 Web Protocols
+
+investigation_steps:
+  - id: I1
+    name: 进程分析 (定位高 CPU 进程)
+    tools: [osquery_processes, wazuh_active_query]
+    autonomy: L4
+    output: miner_processes
+  - id: I2
+    name: 网络分析 (矿池连接)
+    tools: [suricata_flow_query, opencti_query, abuseipdb_query]
+    autonomy: L4
+    output: pool_connections
+  - id: I3
+    name: 持久化检查
+    description: crontab/systemd/init.d/rc.local/authorized_keys/LD_PRELOAD
+    tools: [osquery_cron, osquery_systemd, file_integrity_check]
+    autonomy: L4
+    output: persistence_points
+  - id: I4
+    name: 入侵路径分析
+    tools: [wazuh_auth_log, nginx_access_log, suricata_24h_replay]
+    autonomy: L4
+    output: entry_vector
+
+containment_actions:
+  - id: A1_isolate_host
+    name: 隔离主机 (保留 SSH)
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    tools: [firewall_block_host, wazuh_active_response_isolate]
+    parameters: { mode: network_only, keep_ssh: true }
+  - id: A2_kill_miner
+    name: kill 挖矿进程 + 所有子进程
+    action_type: kill_process
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_kill]
+  - id: A3_clean_persistence
+    name: 清理持久化 (crontab/systemd/init.d/timer)
+    action_type: quarantine_file
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_clean]
+  - id: A4_delete_binary
+    name: 删除挖矿本体
+    action_type: quarantine_file
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response_delete]
+  - id: A5_lateral_scan
+    name: 横向扫描同网段/同SSH互信主机
+    action_type: query_asset
+    autonomy: L4
+    approval: sampling
+    tools: [wazuh_group_scan]
+  - id: A6_block_mining_pools
+    name: 封禁矿池域名/IP (DNS黑洞/防火墙出口)
+    action_type: block_domain
+    autonomy: L2
+    approval: double
+    risk: high
+    tools: [firewall_block_domain, dns_sinkhole]
+  - id: A7_fix_entry_vector
+    name: 修复入侵入口 (SSH弱口令/Web漏洞)
+    action_type: notify
+    autonomy: L3
+    approval: key_decision
+    tools: [vuln_scan, notify]
+  - id: A8_post_incident
+    name: 复盘报告
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    tools: [evidence_pack_save, knowledge_sediment]
+
+knowledge_assets:
+  iocs:
+    - process_hashes
+    - pool_domains
+    - pool_ips
+  ttps:
+    - cryptominer_techniques

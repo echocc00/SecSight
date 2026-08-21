@@ -1,0 +1,83 @@
+# 5 级自主性配置 (对应裁决 §3.4)
+# 每个 agent 动作的 autonomy_level 默认值
+
+levels:
+  L1:
+    name: Manual
+    description: AI 仅显示信息,人类执行所有动作
+    hitl: full_manual
+    auto_execute: false
+    audit: full
+
+  L2:
+    name: Advisory
+    description: AI 推荐,人类必须批准 (强制双签)
+    hitl: double_sign_required
+    auto_execute: false
+    approval:
+      approvers_required: 2                  # Incident Commander + Approver
+      roles: [incident_commander, approver]
+      timeout_minutes: 5
+      timeout_action: escalate               # 超时升级 SOC Manager
+    audit: full
+    applies_to:
+      - isolate_host
+      - block_ip
+      - block_domain
+      - kill_process
+      - quarantine_file
+      - freeze_account
+      - report_regulator
+      - force_password_reset
+
+  L3:
+    name: Shared
+    description: AI 低风险自动,高风险需人 (关键决策需人)
+    hitl: key_decision_required
+    auto_execute: true
+    audit: full
+    applies_to:
+      - forensic_capture
+      - service_restart
+      - rollback_file
+      - evaluate_backup
+
+  L4:
+    name: Supervised
+    description: AI 自动执行,异步审计 (抽样)
+    hitl: sampling_audit
+    auto_execute: true
+    audit: sampling
+    applies_to:
+      - notify
+      - create_ticket
+      - enrich_query
+      - lateral_scan
+      - playbook_record
+
+  L5:
+    name: Fully Autonomous
+    description: 完全自动,记录审计日志即可
+    hitl: none
+    auto_execute: true
+    audit: log_only
+    applies_to:
+      - compliance_record
+      - knowledge_sediment
+      - intel_sync
+      - alert_dedup
+
+# 全局高危动作白名单 (永不自动处置)
+never_auto_execute:
+  - whole_segment_block
+  - shutdown_business_port
+  - reinstall_host
+  - delete_database
+
+# 关键业务主机白名单 (Phase1 启动前填写)
+# 这些主机即使 L2 审批通过,也需额外 C-level 确认
+protected_assets: []
+  # - hostname: prod-db-01
+  #   ips: [10.0.1.10]
+  # - hostname: prod-web-core
+  #   ips: [10.0.2.20]

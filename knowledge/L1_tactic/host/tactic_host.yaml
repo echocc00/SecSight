@@ -1,0 +1,52 @@
+# 主机/端点战术知识 (L1)
+category: "host"
+description: "主机/端点安全场景的 IoC / 检测思路 / 应急要点"
+
+typical_iocs:
+  process_patterns:
+    - "xmrig"
+    - "minerd"
+    - "kdevtmpfsi"
+    - "kinsing"
+    - "powershell -enc"
+    - "certutil -urlcache"
+    - "mshta http"
+  file_patterns:
+    - "*/.ssh/authorized_keys"
+    - "*/crontab"
+    - "/etc/rc.local"
+    - "/etc/init.d/*"
+    - "/etc/systemd/system/*"
+    - "*/.bashrc"
+  network_patterns:
+    - "Stratum 协议 (矿池)"
+    - "矿池域名: pool.minexmr.com / pool.supportxmr.com"
+    - "矿池端口: 3333/4444/5555/7777/8888/14433"
+    - "反弹 Shell: bash -i /dev/tcp"
+
+detection_thinking:
+  - "高 CPU + 可疑进程 = 挖矿 (T1496)"
+  - "批量文件熵值突变 = 勒索 (T1486)"
+  - "未签名进程 + 父子关系异常 = 持久化前兆 (T1053)"
+  - "vssadmin delete shadows / wbadmin delete catalog = 勒索防御规避 (T1490)"
+  - "PowerShell -enc / IEX / DownloadFile = 可疑执行 (T1059.001)"
+
+response_essentials:
+  - "隔离前先取证 (Velociraptor / 内存快照)"
+  - "kill 前先备份进程内存"
+  - "清理持久化必须彻底: crontab + systemd + init.d + rc.local + authorized_keys + LD_PRELOAD"
+  - "保留 SSH 运维通道,避免整机失联"
+  - "横向排查同网段/同SSH互信/同密码主机"
+
+mitre_coverage:
+  tactics:
+    - TA0040 Impact
+    - TA0003 Persistence
+    - TA0002 Execution
+    - TA0004 Privilege Escalation
+  techniques:
+    - T1496 Resource Hijacking
+    - T1486 Data Encrypted for Impact
+    - T1053 Scheduled Task
+    - T1059.001 PowerShell
+    - T1490 Inhibit System Recovery

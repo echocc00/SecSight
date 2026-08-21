@@ -1,0 +1,64 @@
+# LiteLLM 模型路由配置
+# 文档: https://docs.litellm.ai/docs/config_settings
+# 一个 OpenAI 兼容端点路由多厂商
+
+model_list:
+  # 简单分诊 (Tier1) — 快、便宜
+  - model_name: tier1
+    litellm_params:
+      model: minimax/abab6.5-chat
+      api_key: os.environ/MINIMAX_API_KEY
+      api_base: os.environ/MINIMAX_BASE_URL
+
+  # 复杂调查推理 (Tier2) — 推理强、中文好、价格极低
+  - model_name: tier2
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+      api_base: os.environ/DEEPSEEK_BASE_URL
+
+  # 代码/剧本生成 (Tier3)
+  - model_name: tier3
+    litellm_params:
+      model: deepseek/deepseek-coder
+      api_key: os.environ/DEEPSEEK_API_KEY
+      api_base: os.environ/DEEPSEEK_BASE_URL
+
+  # 高风险决策审计 (Tier4) — 境外,仅脱敏后备选
+  - model_name: tier4_audit
+    litellm_params:
+      model: claude-3-5-sonnet-20241022
+      api_key: os.environ/CLAUDE_API_KEY
+    model_info:
+      max_tokens: 8192
+
+  # 备选路由 (境内 fallback)
+  - model_name: tier2_fallback
+    litellm_params:
+      model: openai/qwen-plus
+      api_key: os.environ/QWEN_API_KEY
+      api_base: os.environ/QWEN_BASE_URL
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 60
+  num_retries: 2
+  cache: true                      # 剧本级 prompt 缓存
+  cache_params:
+    type: redis
+    host: redis-litellm
+    port: 6379
+
+router_settings:
+  routing_strategy: usage-based-routing-v2
+  fallbacks:
+    - tier2: [tier2_fallback]      # DeepSeek 故障时切 Qwen
+  context_window_fallbacks:
+    - tier2: [tier2_fallback]
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: ""
+  enforce_user_param: false
+  # 合规: 境外模型仅脱敏后备选 (生产强制境内)
+  # REQUIRE_DOMESTIC_LLM=true 时,SecSight 后端仅调用 tier1/tier2/tier3

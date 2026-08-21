@@ -1,0 +1,48 @@
+# L2 双签审批规则 (对应裁决 §3.4 + §5.3)
+
+approval_rules:
+  # 标准双签: Incident Commander 发起 + Approver 批准
+  standard:
+    approvers_required: 2
+    roles: [incident_commander, approver]
+    timeout_minutes: 5
+    timeout_action: escalate_to_soc_manager
+    notification_channels: [feishu, dingtalk]
+
+  # 高危双签: 额外要求 C-level (整机隔离/全网封禁/关闭业务端口)
+  critical:
+    approvers_required: 3
+    roles: [incident_commander, approver, ciso_or_delegate]
+    timeout_minutes: 15
+    timeout_action: escalate_to_ciso
+    notification_channels: [feishu, dingtalk, sms]
+    applies_to:
+      - whole_segment_block
+      - shutdown_business_port
+      - mass_account_freeze
+
+  # 合规时限: 等保事件 24h 内上报
+  compliance_deadline:
+    report_regulator:
+      deadline_hours: 24
+      escalate_if_overdue: true
+      escalate_to: [compliance_officer, ciso]
+
+  # 保护资产额外确认
+  protected_asset_override:
+    description: 受保护资产即使 L2 通过也需额外确认
+    extra_approver_role: asset_owner
+    extra_timeout_minutes: 30
+
+# 审批选项
+approval_options:
+  - approve
+  - reject
+  - approve_with_modification        # 修改后批准
+  - defer_1h                         # 延后 1 小时
+
+# 回滚规则: 审批拒绝或执行失败时触发对偶动作
+rollback_policy:
+  on_reject: cancel_pending_actions
+  on_execution_failure: reverse_order_compensate
+  on_timeout: escalate + hold_state

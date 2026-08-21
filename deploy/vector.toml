@@ -1,0 +1,116 @@
+# Vector 采集管道: 多源告警 → ECS 归一化 → OpenSearch
+# 文档: https://vector.dev/docs/
+
+data_dir = "/var/lib/vector"
+
+# ============ 输入源 ============
+
+# Wazuh 告警 JSON
+[sources.wazuh_alerts]
+type = "file"
+include = ["/var/log/wazuh/alerts/alerts.json"]
+read_from = "beginning"
+fingerprint.strategy = "device_and_inode"
+
+# Suricata EVE JSON
+[sources.suricata_eve]
+type = "file"
+include = ["/var/log/suricata/eve.json"]
+read_from = "beginning"
+
+# 国产设备 syslog (预留适配器)
+[sources.device_syslog]
+type = "syslog"
+address = "0.0.0.0:514"
+mode = "tcp"
+
+# ============ 转换: ECS 归一化 ============
+
+# Wazuh alert → ECS
+[transforms.wazuh_to_ecs]
+type = "remap"
+inputs = ["wazuh_alerts"]
+source = '''
+# 解析 Wazuh JSON
+parsed = parse_json!(.message)
+
+# ECS 核心字段
+.@timestamp = parsed.timestamp
+.event.id = parsed.id
+.event.action = parsed.rule.description
+.event.severity = to_int(parsed.rule.level) ?? 0
+.event.original = .message
+
+# 源/目标
+.source.ip = parsed.data.srcip
+.source.user.name = parsed.data.srcuser
+.destination.ip = parsed.data.dstip
+
+# 资产
+.host.name = parsed.agent.name
+.host.id = parsed.agent.id
+
+# MITRE 映射
+.threat.tactic.name = parsed.rule.mitre.tactic
+.threat.technique.id = parsed.rule.mitre.id
+
+# SecSight 扩展
+.secsight.source = "wazuh"
+.secsight.rule_id = parsed.rule.id
+.secsight.rule_level = to_int(parsed.rule.level) ?? 0
+'''
+
+# Suricata EVE → ECS
+[transforms.suricata_to_ecs]
+type = "remap"
+inputs = ["suricata_eve"]
+source = '''
+parsed = parse_json!(.message)
+.@timestamp = parsed.timestamp
+.event.original = .message
+
+# 仅告警类事件入主索引
+if parsed.event_type != "alert" {
+  abort
+}
+
+.event.id = parsed.alert.signature_id
+.event.action = parsed.alert.signature
+.event.severity = to_int(parsed.alert.severity) ?? 0
+.source.ip = parsed.src_ip
+.destination.ip = parsed.dest_ip
+.host.name = parsed.host
+
+.secsight.source = "suricata"
+.secsight.signature = parsed.alert.signature
+.secsight.category = parsed.alert.category
+'''
+
+# ============ PII 脱敏 (入库前) ============
+[transforms.pii_redaction]
+type = "remap"
+inputs = ["wazuh_to_ecs", "suricata_to_ecs"]
+source = '''
+if exists(.source.user.name) {
+  .source.user.name = redact(.source.user.name, filters: ["EMAIL", "PHONE"])
+}
+'''
+
+# ============ 输出 → OpenSearch ============
+
+[sinks.opensearch_alerts]
+type = "elasticsearch"
+inputs = ["pii_redaction"]
+endpoints = ["http://opensearch:9200"]
+index = "secsiem-alerts-%Y.%m.%d"
+auth.strategy = "basic"
+auth.user = "admin"
+auth.password = "${OPENSEARCH_PASSWORD}"
+bulk.action = "create"
+encoding.except_fields = ["message"]
+
+[sinks.console_debug]
+type = "console"
+inputs = ["pii_redaction"]
+encoding.codec = "json"
+level = "warn"

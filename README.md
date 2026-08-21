@@ -1,0 +1,79 @@
+# SecSight — AI 驱动的安全运维平台
+
+> AI 辅助的 SecOps Copilot + 自动处置 SOAR 引擎。
+> 监控业务系统 → AI 研判 → 半自动应急响应 → 知识沉淀。
+
+## 核心定位
+
+面向中小型企业(≤500 资产)的 AI 安全运维平台,通过集成成熟开源组件 + 自研 AI 编排大脑,把传统 SOC 的"采集→告警→人工分析→处置"压缩为"采集→AI研判→半自动响应"。
+
+**关键决策**: 不重新发明轮子——检测/SIEM/SOAR/漏洞扫描全部用成熟开源项目,SecSight 自身只做 AI 研判编排 + 场景化剧本 + 统一事件总线。
+
+## 技术栈
+
+| 层 | 选型 |
+|---|---|
+| 主机 EDR | Wazuh + Sysmon-Modular + Falco |
+| 网络检测 | Suricata + Arkime + Coraza + CrowdSec |
+| SIEM/日志 | OpenSearch + Vector (ECS schema) |
+| 威胁情报 | OpenCTI CE + 免费源(付费接口预留) |
+| SOAR 执行 | Shuffle (AGPL 隔离部署) |
+| 漏洞/攻击面 | Nuclei + Trivy + KubeHound + Nmap |
+| AI 核心 | LangGraph + LiteLLM 网关 + 云端 LLM(DeepSeek/MiniMax) + Qdrant |
+| 案件管理 | DFIR-IRIS (LGPL-3.0) |
+| 工具协议 | MCP |
+| 后端/前端 | FastAPI + Vite/React/Antd |
+
+## 核心特性
+
+- **22 个真实企业剧本**(按业务系统分组),Phase1 优先 6 个 P0(勒索/挖矿/持久化/暴破/日志合规/服务崩溃)
+- **5 级自主性**(L1-L5),每动作标注 autonomy_level,高危处置 L2 强制双签
+- **4 层知识库**(L0 框架/L1 战术/L2 剧本/L3 案例),运行时沉淀形成飞轮
+- **私有化优先**,AGPL/GPL 组件进程隔离,主体可闭源商业化
+- **国产化适配**,境内 LLM + 等保 2.0 合规
+
+## 文档
+
+| 文档 | 说明 |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 整体架构(A 体系) |
+| [docs/02-design.md](docs/02-design.md) | 详细设计(B 体系,概念框架来源) |
+| [docs/03-selection-arbitration.md](docs/03-selection-arbitration.md) | 选型裁决记录(v1.1,收敛版) |
+| [docs/04-implementation-phase1.md](docs/04-implementation-phase1.md) | Phase1 实施计划 |
+| [docs/research/](docs/research/) | 7 份子领域调研报告 |
+
+## 快速开始
+
+```bash
+# 1. 配置环境变量
+cp deploy/.env.example deploy/.env
+# 编辑 .env: 填入 DeepSeek/MiniMax API key、Wazuh/OpenSearch 密码等
+
+# 2. 启动基础设施(分组建议)
+cd deploy
+docker compose up -d postgres qdrant litellm opensearch vector
+docker compose up -d wazuh-manager wazuh-indexer wazuh-dashboard
+docker compose up -d shuffle opencti dfir-iris
+
+# 3. 启动 SecSight 主体
+docker compose up -d secsight-backend secsight-frontend
+
+# 4. 访问
+# SecSight Dashboard:  http://localhost:8080
+# Wazuh Dashboard:     http://localhost:5601
+# OpenSearch Dashboards: http://localhost:5602
+# Shuffle:             http://localhost:3001
+# OpenCTI:             http://localhost:8080
+# DFIR-IRIS:           http://localhost:8000
+```
+
+> 详细部署见 [docs/04-implementation-phase1.md](docs/04-implementation-phase1.md)。
+
+## License
+
+SecSight 主体代码: Apache-2.0 (可闭源商业化)。
+集成组件遵循各自 License,AGPL/GPL 组件(Shuffle/Wazuh/KubeHound)进程隔离部署,不链接代码。
+
+## 状态
+
+🚧 Phase1 开发中 (MVP, 6 个 P0 剧本闭环)

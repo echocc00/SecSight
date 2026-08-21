@@ -1,0 +1,13 @@
+# 垂直切片验证依赖 (精简)
+# 完整依赖见 pyproject.toml
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+sqlalchemy>=2.0.0
+aiosqlite>=0.20.0
+langgraph>=0.1.0
+langchain-core>=0.2.0
+pyyaml>=6.0.1
+structlog>=24.1.0
+httpx>=0.27.0

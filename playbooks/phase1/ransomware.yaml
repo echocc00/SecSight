@@ -1,0 +1,200 @@
+# 勒索病毒加密文件应急响应 (Phase1 第1优先级)
+# 对应 02-design §4.1 剧本1
+# MITRE: TA0040 Impact + T1486 Data Encrypted for Impact
+
+id: pb_ransomware_v1
+name: 勒索病毒加密文件应急响应
+category: host
+priority: P0
+phase: 1
+version: "1.0"
+autonomy_level_default: L2
+
+description: |
+  业务影响: 直接业务中断 + 触发等保事件上报 + C-level 介入。
+  检测源: Wazuh FIM 批量文件修改 + Suricata 勒索 IOC。
+
+triggers:
+  # 任一触发即进入剧本
+  sigma_rules:
+    - suspicious_mass_file_modification
+    - ransomware_extension_creation
+    - vssadmin_delete_shadows
+    - wbadmin_delete_catalog
+  suricata_rules:
+    - "ET MALWARE Ransomware"
+  wazuh_rules:
+    - "550"      # File integrity monitoring
+    - "5710"     # Suspicious file
+    - "594"      # Full command execution
+  indicators:
+    file_extensions:
+      - .locked
+      - .encrypted
+      - .lockbit
+      - .blackcat
+      - .aes
+    commands:
+      - "vssadmin delete shadows"
+      - "wbadmin delete catalog"
+      - "bcdedit /set recoveryenabled no"
+
+mitre_mapping:
+  tactics:
+    - TA0040 Impact
+    - TA0040 Inhibit Recovery
+  techniques:
+    - T1486 Data Encrypted for Impact
+    - T1490 Inhibit System Recovery
+    - T1059.001 PowerShell
+
+investigation_steps:
+  - id: I1
+    name: 进程白名单校验
+    description: 定位加密进程,校验是否在白名单
+    tools:
+      - osquery_processes
+      - sysmon_parent_child
+      - virustotal_hash
+    autonomy: L4
+    output: suspicious_processes
+
+  - id: I2
+    name: 文件熵值检测
+    description: 检测高熵加密文件特征 (7z+ 高熵)
+    tools:
+      - file_entropy_scan
+    autonomy: L4
+    output: encrypted_files
+
+  - id: I3
+    name: 横向影响评估
+    description: 同 SMB/RDP 互信主机批量排查
+    tools:
+      - cmdb_query_related_hosts
+      - wazuh_query_group
+    autonomy: L4
+    output: affected_hosts
+
+  - id: I4
+    name: 勒索家族识别
+    description: 进程 hash / 钱包地址 / C2 比对情报库
+    tools:
+      - opencti_query
+      - abuseipdb_query
+      - otx_query
+    autonomy: L4
+    output: ransomware_family
+
+containment_actions:
+  - id: A1_isolate_host
+    name: 隔离主机 (保留 SSH 运维通道)
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    risk: critical
+    tools:
+      - firewall_block_host
+      - wazuh_active_response_isolate
+    rollback: A1_rollback
+    parameters:
+      mode: network_only
+      keep_ssh: true
+
+  - id: A2_block_c2
+    name: 阻断勒索 C2
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools:
+      - firewall_block_ip
+      - crowdsec_bouncer_block
+
+  - id: A3_disable_lateral
+    name: 禁用 SMB/RDP 横向
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    risk: high
+    tools:
+      - firewall_policy_update
+    parameters:
+      block_protocols: [smb, rdp, wmi]
+
+  - id: A4_evaluate_backup
+    name: 评估备份可恢复性
+    action_type: query_asset
+    autonomy: L3
+    approval: key_decision
+    risk: medium
+    tools:
+      - backup_api_query
+
+  - id: A5_no_ransom
+    name: 不支付赎金 (剧本强制断言)
+    action_type: notify
+    autonomy: L5
+    approval: none
+    risk: low
+    tools:
+      - notify
+    parameters:
+      message: "剧本策略: 禁止支付赎金,触发备份恢复流程"
+
+  - id: A6_restore_from_backup
+    name: 备份验证后恢复
+    action_type: rollback_file
+    autonomy: L3
+    approval: key_decision
+    risk: high
+    tools:
+      - backup_restore
+
+  - id: A7_report_regulator
+    name: 24h 内向上级监管机关报告 (等保)
+    action_type: report_regulator
+    autonomy: L2
+    approval: double
+    risk: medium
+    deadline: 24h
+    tools:
+      - compliance_report_generator
+      - notify
+
+  - id: A8_post_incident
+    name: 复盘 + 加固 + 知识沉淀
+    action_type: notify
+    autonomy: L4
+    approval: sampling
+    risk: low
+    tools:
+      - evidence_pack_save
+      - knowledge_sediment
+      - detection_rule_update
+
+knowledge_assets:
+  iocs:
+    - process_hashes
+    - c2_ips
+    - ransom_emails
+    - wallet_addresses
+  ttps:
+    - ransomware_family_techniques
+  cases:
+    - historical_ransomware_cases
+
+evidence_pack:
+  required:
+    - process_tree
+    - file_modification_timeline
+    - network_connections_24h
+    - registry_changes
+    - llm_reasoning_trace
+  retention_days: 365
+
+compliance:
+  dengbao_level: 3                    # 等保三级
+  report_required: true
+  report_deadline_hours: 24
+  regulatory_body: "上级监管机关 + CNCERT"

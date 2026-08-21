@@ -1,0 +1,240 @@
+# SecSight Phase1 docker-compose
+# 分组部署,AGPL/GPL 组件独立网络隔离
+# 用法: docker compose up -d <service>
+# 依赖: 先 cp .env.example .env 并填写
+
+x-common-env: &common-env
+  TZ: Asia/Shanghai
+
+networks:
+  secsight-net:        # SecSight 主体内部网络
+    driver: bridge
+  infra-net:           # 基础设施网络 (Wazuh/OpenSearch/Vector)
+    driver: bridge
+  isolation-net:       # AGPL/GPL 隔离网络 (Shuffle/OpenCTI/IRIS)
+    driver: bridge
+
+volumes:
+  postgres-data:
+  qdrant-data:
+  opensearch-data:
+  wazuh-indexer-data:
+  wazuh-manager-data:
+  shuffle-data:
+  opencti-data:
+  iris-data:
+
+services:
+  # ============ SecSight 主体组 (可闭源) ============
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [secsight-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks: [secsight-net]
+    ports: ["6333:6333"]
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      MINIMAX_API_KEY: ${MINIMAX_API_KEY}
+      QWEN_API_KEY: ${QWEN_API_KEY}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    networks: [secsight-net]
+    ports: ["4000:4000"]
+
+  secsight-backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_started }
+      litellm: { condition: service_started }
+    networks: [secsight-net, isolation-net, infra-net]
+    ports: ["8000:8000"]
+    volumes:
+      - ../playbooks:/app/playbooks:ro
+      - ../knowledge:/app/knowledge:ro
+      - ../policies:/app/policies:ro
+
+  secsight-frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on: [secsight-backend]
+    networks: [secsight-net]
+    ports: ["8080:80"]
+
+  # ============ 基础设施组 ============
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_INITIAL_ADMIN_PASSWORD}
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    networks: [infra-net, secsight-net]
+    ports: ["9200:9200"]
+
+  vector:
+    image: timberio/vector:0.36.0-debian
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    volumes:
+      - ./vector.toml:/etc/vector/vector.toml:ro
+    networks: [infra-net, secsight-net]
+    depends_on: [opensearch]
+
+  wazuh-manager:
+    image: wazuh/wazuh-manager:4.8.0
+    restart: unless-stopped
+    hostname: wazuh-manager
+    environment:
+      <<: *common-env
+      INDEXER_URL: https://wazuh-indexer:9200
+      INDEXER_USERNAME: admin
+      INDEXER_PASSWORD: ${WAZUH_INDEXER_PASSWORD}
+      FILEBEAT_SSL_VERIFICATION_MODE: full
+    volumes:
+      - wazuh-manager-data:/var/ossec/data
+    networks: [infra-net]
+    ports:
+      - "1514:1514"
+      - "1515:1515"
+      - "55000:55000"
+    depends_on: [wazuh-indexer]
+
+  wazuh-indexer:
+    image: wazuh/wazuh-indexer:4.8.0
+    restart: unless-stopped
+    hostname: wazuh-indexer
+    environment:
+      <<: *common-env
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${WAZUH_INDEXER_PASSWORD}
+    volumes:
+      - wazuh-indexer-data:/var/ossec/indexer
+    networks: [infra-net]
+    ports: ["9201:9200"]
+
+  wazuh-dashboard:
+    image: wazuh/wazuh-dashboard:4.8.0
+    restart: unless-stopped
+    hostname: wazuh-dashboard
+    environment:
+      <<: *common-env
+      INDEXER_URL: https://wazuh-indexer:9200
+      WAZUH_API_URL: https://wazuh-manager:55000
+      DASHBOARD_USERNAME: kibanaserver
+      DASHBOARD_PASSWORD: ${WAZUH_INDEXER_PASSWORD}
+    networks: [infra-net]
+    ports: ["5601:5601"]
+    depends_on: [wazuh-indexer, wazuh-manager]
+
+  # ============ 隔离组 (AGPL/GPL,独立网络) ============
+  shuffle:
+    image: shuffle/shuffle:latest
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      SHUFFLE_DEFAULT_USERNAME: ${SHUFFLE_DEFAULT_USERNAME}
+      SHUFFLE_DEFAULT_PASSWORD: ${SHUFFLE_DEFAULT_PASSWORD}
+    volumes:
+      - shuffle-data:/shuffle
+    networks: [isolation-net]
+    ports: ["3001:3001"]
+    # 注: AGPL-3.0,仅经 Webhook/REST 调用,SecSight 主体不 import 其代码
+
+  opencti:
+    image: opencti/platform:6.2.0
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      OPENCTI_ADMIN_EMAIL: ${OPENCTI_ADMIN_EMAIL}
+      OPENCTI_ADMIN_PASSWORD: ${OPENCTI_ADMIN_PASSWORD}
+      OPENCTI_ADMIN_TOKEN: ${OPENCTI_ADMIN_TOKEN}
+      # 依赖 (同 isolation-net)
+      ELASTICSEARCH__HOST: opensearch-isolated
+      REDIS__HOSTNAME: redis-opencti
+      MINIO__ENDPOINT: minio
+      RABBITMQ__HOSTNAME: rabbitmq-opencti
+    depends_on:
+      - redis-opencti
+      - minio
+      - rabbitmq-opencti
+    networks: [isolation-net]
+    ports: ["8082:8080"]
+
+  # OpenCTI 依赖 (隔离,不复用主体 opensearch)
+  redis-opencti:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [isolation-net]
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data
+    volumes: [opencti-data:/data]
+    networks: [isolation-net]
+  rabbitmq-opencti:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    networks: [isolation-net]
+
+  dfir-iris:
+    image: dfir-iris/irisweb:latest
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      IRIS_SECRET_KEY: ${IRIS_SECRET_KEY}
+      IRIS_ADMIN_PASSWORD: ${IRIS_ADMIN_PASSWORD}
+      IRIS_POSTGRES_PASSWORD: ${IRIS_POSTGRES_PASSWORD}
+    networks: [isolation-net]
+    ports: ["8001:8000"]
+    # 注: LGPL-3.0,禁用 iris-skeleton-module/iris-mwdb-module/iris-intelowl-module (AGPL)
+
+  # 注: Suricata 需旁路监听网卡,通常单独物理机部署,不在本 compose 内
+  # suricata:
+  #   image: jasonish/suricata:latest
+  #   cap_add: [NET_ADMIN, NET_RAW]
+  #   network_mode: host
