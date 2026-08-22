@@ -6,6 +6,7 @@ import {
   BookOutlined,
   LogoutOutlined,
   UserOutlined,
+  RobotOutlined,
 } from "@ant-design/icons";
 import { useState, useEffect, Suspense, lazy } from "react";
 import { auth } from "./api/client";
@@ -17,6 +18,7 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Cases = lazy(() => import("./pages/Cases"));
 const CaseDetail = lazy(() => import("./pages/CaseDetail"));
 const Playbooks = lazy(() => import("./pages/Playbooks"));
+const Agents = lazy(() => import("./pages/Agents"));
 const Login = lazy(() => import("./pages/Login"));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -85,6 +87,11 @@ export default function App() {
                         icon: <BookOutlined />,
                         label: <Link to="/playbooks">剧本</Link>,
                       },
+                      {
+                        key: "agents",
+                        icon: <RobotOutlined />,
+                        label: <Link to="/agents">Agent</Link>,
+                      },
                     ]}
                   />
                 </Sider>
@@ -116,6 +123,7 @@ export default function App() {
                         <Route path="/cases" element={<Cases />} />
                         <Route path="/cases/:caseId" element={<CaseDetail />} />
                         <Route path="/playbooks" element={<Playbooks />} />
+                        <Route path="/agents" element={<Agents />} />
                       </Routes>
                     </Suspense>
                   </Content>

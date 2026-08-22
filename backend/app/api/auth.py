@@ -37,10 +37,12 @@ async def login(req: LoginRequest) -> TokenResponse:
     user = await authenticate_user_async(req.username, req.password)
     if not user:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
-    token = create_access_token(user["username"], user["role"])
+    # DB 返回 role 为 str,内存字典返回 Role enum,统一处理
+    role_val = user["role"].value if hasattr(user["role"], "value") else user["role"]
+    token = create_access_token(user["username"], Role(role_val))
     return TokenResponse(
         access_token=token,
-        role=user["role"].value if hasattr(user["role"], "value") else user["role"],
+        role=role_val,
         username=user["username"],
     )
 

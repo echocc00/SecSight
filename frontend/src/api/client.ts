@@ -112,4 +112,25 @@ export const api = {
 
   // 健康与指标
   health: () => client.get("/health").then((r) => r.data),
+
+  // Agents
+  listAgents: () =>
+    client.get<ApiResponse<any[]>>("/agents").then((r) => r.data.data),
+
+  listProactiveAgents: () =>
+    client.get<ApiResponse<any[]>>("/agents/proactive").then((r) => r.data.data),
+
+  runProactiveAgent: (name: string, timeWindowHours: number = 24, targetAssets?: string[]) =>
+    client
+      .post<ApiResponse>(`/agents/proactive/${name}`, null, {
+        params: { time_window_hours: timeWindowHours, target_assets: targetAssets?.join(",") || undefined },
+      })
+      .then((r) => r.data.data),
+
+  runAgent: (caseId: string, name: string) =>
+    client.post<ApiResponse>(`/agents/${caseId}/${name}`).then((r) => r.data.data),
+
+  // 审批记录 (双签进度)
+  listApprovalRecords: (caseId: string) =>
+    client.get<ApiResponse<any[]>>(`/approvals/${caseId}/records`).then((r) => r.data.data),
 };
