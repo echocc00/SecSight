@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Link, Navigate } from "react-router-dom";
-import { Layout, Menu, theme, Dropdown, Space, Tag } from "antd";
+import { Layout, Menu, theme, Dropdown, Space, Tag, Spin } from "antd";
 import {
   DashboardOutlined,
   AlertOutlined,
@@ -7,15 +7,17 @@ import {
   LogoutOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { useState, useEffect } from "react";
-import Dashboard from "./pages/Dashboard";
-import Cases from "./pages/Cases";
-import CaseDetail from "./pages/CaseDetail";
-import Playbooks from "./pages/Playbooks";
-import Login from "./pages/Login";
+import { useState, useEffect, Suspense, lazy } from "react";
 import { auth } from "./api/client";
 
 const { Header, Sider, Content } = Layout;
+
+// 路由懒加载 (按需加载各页面,减小首屏 bundle)
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Cases = lazy(() => import("./pages/Cases"));
+const CaseDetail = lazy(() => import("./pages/CaseDetail"));
+const Playbooks = lazy(() => import("./pages/Playbooks"));
+const Login = lazy(() => import("./pages/Login"));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!auth.isLoggedIn()) return <Navigate to="/login" replace />;
@@ -108,12 +110,14 @@ export default function App() {
                     </Dropdown>
                   </Header>
                   <Content style={{ margin: 24, padding: 24, background: token.colorBgContainer }}>
-                    <Routes>
-                      <Route path="/" element={<Dashboard />} />
-                      <Route path="/cases" element={<Cases />} />
-                      <Route path="/cases/:caseId" element={<CaseDetail />} />
-                      <Route path="/playbooks" element={<Playbooks />} />
-                    </Routes>
+                    <Suspense fallback={<div style={{ textAlign: "center", padding: 100 }}><Spin size="large" /></div>}>
+                      <Routes>
+                        <Route path="/" element={<Dashboard />} />
+                        <Route path="/cases" element={<Cases />} />
+                        <Route path="/cases/:caseId" element={<CaseDetail />} />
+                        <Route path="/playbooks" element={<Playbooks />} />
+                      </Routes>
+                    </Suspense>
                   </Content>
                 </Layout>
               </Layout>
