@@ -206,11 +206,17 @@ class MISPCommunityProvider(ThreatIntelProvider):
 class ThreatBookProvider(ThreatIntelProvider):
     """微步在线 X 情报云 (付费,很长一段时间不接入)
 
-    接入时实现以下方法,调用微步 API:
-      POST /api/v3/ip/reputation
-      POST /api/v3/domain/reputation
-      POST /api/v3/file/reputation
-      POST /api/v3/url/reputation
+    接口规格已核实 (社区封装库 Chiaki2333/threatbookAPI 源码):
+      base_url: https://api.threatbook.cn/v3
+      方式: POST
+      endpoints:
+        IP 信誉:    /scene/ip_reputation  (推荐) 或 /ip/query
+        域名查询:   /domain/query         或 /scene/dns
+        文件报告:   /file/report
+      必需参数: apikey, resource (查询值)
+      返回: threat_tags, confidence, judgments, carrier/others
+
+    接入时实现以下方法,调用微步 API (POST + apikey)。
     """
 
     name = "threatbook"
@@ -218,6 +224,7 @@ class ThreatBookProvider(ThreatIntelProvider):
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key  # 预留,暂不使用
+        self.base_url = "https://api.threatbook.cn/v3"  # 已核实
 
     async def query_ip(self, ip: str) -> IntelResult:
         raise NotImplementedError("付费 provider 未接入,见裁决 §3.5.1")

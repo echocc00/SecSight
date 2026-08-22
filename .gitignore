@@ -95,3 +95,4 @@ wazuh_data/
 secrets/
 credentials.json
 *.tsbuildinfo
+*.imported.yaml

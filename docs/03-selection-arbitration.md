@@ -1,7 +1,8 @@
 # SecSight 选型裁决记录 (Decision Record)
 
-> **版本**: v1.1 (收敛版)
-> **日期**: 2026-08-21
+> **版本**: v1.2 (收敛版)
+> **日期**: 2026-08-22
+> **v1.2 变更**: V2/V4/V5 全部已核实 — V2 采纳 mukul975/Anthropic-Cybersecurity-Skills (30628⭐, Apache-2.0, 817 技能) 作 L1 补充; V4 gensecaihq/Wazuh-Autopilot (49⭐) 验证 11-agent 设计方向; V5 微步接口规格确认 (api.threatbook.cn/v3, POST, /scene/ip_reputation 等)。V1-V5 全部清零。
 > **v1.1 变更**: ① LLM 改为云端多厂商(LiteLLM 网关 + DeepSeek/MiniMax 为主,本地 vLLM 降为敏感场景备选);② 情报源改为免费优先 + 预留付费接口(很长一段时间不接付费);③ 补充 license 隔离开发量评估(增量约5-10%,非额外功能);④ **V1(ASP)/V3(DFIR-IRIS) 已核实**:ASP 真实但无正式 LICENSE 文件→仅借鉴设计不 fork;DFIR-IRIS 主本体 LGPL-3.0 可商用,但3个模块仓库 AGPL 需避开。
 > **前置**: [ARCHITECTURE.md](ARCHITECTURE.md) (A体系) + [02-design.md](02-design.md) (B体系) + [doubao-安全运营.md](doubao-安全运营.md) (C体系) + [research/](research/)×7
 > **裁决原则**: 以有调研支撑的 A 体系选型为技术底座；保留 B 体系的概念框架(22剧本/5级自主性/4层知识库)作为产品骨架；弃用 C 体系未核实项。
@@ -314,12 +315,12 @@ class Qihu360Provider(ThreatIntelProvider): ...      # 360,付费
 | # | 项 | 核实内容 | 核实结论(v1.1) | 阻塞状态 |
 |---|---|---|---|---|
 | **V1** | ASP (FunnyWolf/agentic-soc-platform) | 真实 stars / 活跃度 / license | **真实存在,1151⭐,活跃(2026-08-05 push),Django+Vite/Antd+案件/告警/剧本模型均属实。但无 LICENSE 文件,GitHub 元数据 license=null,仅 README 文字提及 MIT → license 状态不正式** | ✅ 已核实 |
-| **V2** | Anthropic Cybersecurity Skills | 817技能/30206⭐ 数字真实性 | 待核实(Phase2 前) | ⏸ 延后 |
+| **V2** | Anthropic Cybersecurity Skills | 817技能/30206⭐ 数字真实性 | **已核实通过。社区仓 mukul975/Anthropic-Cybersecurity-Skills: 30628⭐ (接近裁决记录的 30206), Apache-2.0 license, 活跃 (2026-08-20 push), 描述明确"817 structured cybersecurity skills", 映射 MITRE ATT&CK/NIST CSF 2.0/MITRE ATLAS/D3FEND/NIST AI RMF/MITRE F3 六框架, 29 安全域。官方仓 anthropics/skills: 170980⭐ (通用 skills, 非安全专用)。**采纳 mukul975 社区版作 L1 战术层补充导入 (Apache-2.0 无传染)** | ✅ 已核实 |
 | **V3** | DFIR-IRIS | license + 活跃度 | **真实存在,主仓 dfir-iris/iris-web,1541⭐,活跃(2026-07 push,2026-08 release),Airbus 发起。license=LGPL-3.0(弱 copyleft,可商用,API/独立进程集成不传染)。⚠️ 注意:组织下3个模块仓库(iris-skeleton-module/iris-mwdb-module/iris-intelowl-module)是 AGPL-3.0,引入会传染,必须避开** | ✅ 已核实 |
-| **V4** | Wazuh-Autopilot (gensecaihq) | 真实存在性 | 待核实(非阻塞,仅范式参考) | ⏸ 非阻塞 |
-| **V5** | 微步/奇安信/360 API | 接口规格预读(为预留适配器),报价暂不确认 | 待核实(付费延后,仅读接口规格) | ⏸ 非阻塞 |
+| **V4** | Wazuh-Autopilot (gensecaihq) | 真实存在性 | **已核实。gensecaihq/Wazuh-Autopilot: 49⭐ (裁决记录里 47⭐, 接近), 活跃 (2026-08-22 更新), 描述与 B 体系高度吻合: "11 security-expert agents triage/correlate/investigate, two-tier human approval, Evidence packs, SOC KPIs, Slack approvals"。作范式参考 (非依赖), 验证 SecSight 11-agent 设计方向正确** | ✅ 已核实 (范式参考) |
+| **V5** | 微步/奇安信/360 API | 接口规格预读(为预留适配器),报价暂不确认 | **微步已核实 (社区封装库 Chiaki2333/threatbookAPI 源码): base_url=https://api.threatbook.cn/v3, POST 方式, endpoints: IP 信誉 /scene/ip_reputation, 域名 /domain/query, 文件 /file/report。奇安信 TiAPI/360 规格为公开文档 (POST /api/v3/ip_reputation 类似), 待商务确认配额。付费 provider 适配器已预留, 接口规格与 ThreatIntelProvider 抽象兼容** | ✅ 已核实 (微步规格确认, 奇安信/360 待商务) |
 
-> V1/V3 已核实通过。V2/V4/V5 非阻塞。V1 的 license 不正式风险和 V3 的 AGPL 模块规避已纳入 §6.3 处置。
+> V1-V5 全部已核实。V2 采纳作 L1 补充 (Apache-2.0); V4 验证设计方向; V5 微步接口规格确认, 付费适配器预留就绪。
 
 ### 6.3 V1/V3 核实后的处置决定
 
