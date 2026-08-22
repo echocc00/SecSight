@@ -1,7 +1,7 @@
 """API 路由汇总"""
 from fastapi import APIRouter
 
-from app.api import alerts, approvals, auth, cases, compliance, evidence, playbooks
+from app.api import agents, alerts, approvals, auth, cases, compliance, evidence, knowledge, playbooks
 
 router = APIRouter()
 router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -11,3 +11,5 @@ router.include_router(playbooks.router, prefix="/playbooks", tags=["playbooks"])
 router.include_router(approvals.router, prefix="/approvals", tags=["approvals"])
 router.include_router(evidence.router, prefix="/evidence", tags=["evidence"])
 router.include_router(compliance.router, prefix="/compliance", tags=["compliance"])
+router.include_router(agents.router, prefix="/agents", tags=["agents"])
+router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])

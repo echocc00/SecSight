@@ -64,6 +64,8 @@ class Settings(BaseSettings):
     # mock_mode=False 时,LLM 走真实;retriever/executor 仍需各自 enable 才用真实
     enable_qdrant: bool = Field(default=False, alias="ENABLE_QDRANT")
     enable_shuffle: bool = Field(default=False, alias="ENABLE_SHUFFLE")
+    enable_opensearch: bool = Field(default=False, alias="ENABLE_OPENSEARCH")
+    enable_checkpointer: bool = Field(default=False, alias="ENABLE_CHECKPOINTER")
     # 情报源: mock_mode=False 且 enable_threat_intel=True 时用真实 AbuseIPDB+OTX
     enable_threat_intel: bool = Field(default=False, alias="ENABLE_THREAT_INTEL")
     abuseipdb_api_key: str = Field(default="", alias="ABUSEIPDB_API_KEY")

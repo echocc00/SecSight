@@ -65,6 +65,15 @@ class PlaybookEngine:
             for cmd in commands:
                 if cmd.lower() in raw_str:
                     score += 6
+        # MITRE 技术匹配 (国产设备告警常带 mitre_technique,权重 7)
+        if alert.mitre_techniques:
+            pb_techniques = set()
+            for t in (playbook.mitre_mapping.techniques or []):
+                # 提取技术 ID (如 "T1496 Resource Hijacking" → "T1496")
+                pb_techniques.add(t.split(" ")[0])
+            for alert_t in alert.mitre_techniques:
+                if alert_t.split(" ")[0] in pb_techniques:
+                    score += 7
         # 网络模式
         if triggers.network:
             pool_ports = triggers.network.get("pool_ports", [])
