@@ -13,18 +13,22 @@ async def _inject(client, alert_type: str) -> dict:
 
 
 async def _approve_all(client, case_id: str) -> None:
+    """双签: 每个动作提交 incident_commander + approver 两个角色"""
     r = await client.get(f"/api/approvals/{case_id}/pending")
     pending = r.json()["data"]
     for action in pending:
-        await client.post(
-            f"/api/approvals/{case_id}/actions/{action['action_id']}/approve",
-            json={
-                "approver_role": "incident_commander",
-                "approver_user": "tester",
-                "decision": "approved",
-                "comment": "integration test",
-            },
-        )
+        # 高危动作需三签 (ciso_or_delegate)
+        roles = action.get("required_roles", ["incident_commander", "approver"])
+        for role in roles:
+            await client.post(
+                f"/api/approvals/{case_id}/actions/{action['action_id']}/approve",
+                json={
+                    "approver_role": role,
+                    "approver_user": f"user-{role}",
+                    "decision": "approved",
+                    "comment": "e2e test",
+                },
+            )
 
 
 class TestHealthAndDiscovery:

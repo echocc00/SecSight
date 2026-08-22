@@ -1,12 +1,18 @@
-"""审批服务 — L2 双签逻辑"""
+"""审批服务 — L2 真正双签多记录
+
+双签规则:
+  - L2 动作需 incident_commander + approver 两个不同角色都 approved
+  - 高危动作 (isolate_host/block_ip 等) 需 + ciso_or_delegate (三签)
+  - 同角色重复审批被拒 (防同人刷)
+  - 任一 rejected → 该动作拒绝
+"""
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import uuid4
 
 from app.db.database import async_session
-from app.db.repositories import AuditLogRepository, CaseRepository
-from app.models.schemas import ApprovalRecord, AutonomyLevel, CaseStatus
+from app.db.repositories import ApprovalRecordRepository, AuditLogRepository, CaseRepository
+from app.models.schemas import AutonomyLevel, CaseStatus
 
 import structlog
 
@@ -15,6 +21,7 @@ log = structlog.get_logger()
 # 双签角色要求
 DOUBLE_SIGN_ROLES = {"incident_commander", "approver"}
 # 高危三签 (整机隔离/全网封禁等)
+CRITICAL_ACTIONS = {"isolate_host", "block_ip", "block_domain", "freeze_account"}
 CRITICAL_TRIPLE_ROLES = {"incident_commander", "approver", "ciso_or_delegate"}
 
 
@@ -32,13 +39,7 @@ class ApprovalService:
         decision: str,
         comment: str = "",
     ) -> dict:
-        """提交单个审批
-
-        双签逻辑:
-          - L2 动作需要 incident_commander + approver 两个角色都 approved
-          - 任一 rejected → 该动作拒绝
-          - 全部动作 approved → 恢复 workflow 执行
-        """
+        """提交单个审批 (多记录,双签判定)"""
         async with async_session() as session:
             repo = CaseRepository(session)
             case = await repo.get(case_id)
@@ -52,21 +53,27 @@ class ApprovalService:
                 raise ApprovalError(f"Action {action_id} not found in case")
 
             if not action.approval_required:
-                raise ApprovalError(f"Action {action_id} 无需审批 (autonomy={action.autonomy_level.value})")
+                raise ApprovalError(
+                    f"Action {action_id} 无需审批 (autonomy={action.autonomy_level.value})"
+                )
 
-            # 检查角色是否已审批过 (防同人重复)
-            existing = case.approvals.get(action_id)
-            # 简化: 每个 action 存最近审批记录,双签靠两次不同角色提交
-            # 这里用 approval_status 字典在 Case.approvals 里存多角色
-            approval = ApprovalRecord(
+            record_repo = ApprovalRecordRepository(session)
+
+            # 防同人重复: 同角色同 action 已审批过则拒
+            if await record_repo.has_role_approved(case_id, action_id, approver_role):
+                raise ApprovalError(
+                    f"角色 {approver_role} 已审批过 action {action_id[:8]}"
+                )
+
+            # 记录审批
+            await record_repo.add(
+                case_id=case_id,
                 action_id=action_id,
                 approver_role=approver_role,
                 approver_user=approver_user,
                 decision=decision,
-                timestamp=datetime.utcnow(),
                 comment=comment,
             )
-            await repo.add_approval(case_id, approval)
 
             audit = AuditLogRepository(session)
             await audit.record(
@@ -76,13 +83,11 @@ class ApprovalService:
                 detail={"action_id": action_id, "role": approver_role, "comment": comment},
             )
 
-            # 检查是否该 action 双签完成
+            # 判定该 action 是否完成双签
             action_fully_approved = await self._check_action_fully_approved(
-                case_id, action_id, action
+                record_repo, case_id, action_id, action
             )
-
-            # 检查整个 Case 是否所有 L2 动作都批准
-            all_approved = await self._check_all_approved(case_id)
+            all_approved = await self._check_all_approved(record_repo, case)
 
             if all_approved:
                 await repo.update_status(case_id, CaseStatus.investigating)
@@ -100,40 +105,44 @@ class ApprovalService:
             }
 
     async def _check_action_fully_approved(
-        self, case_id: str, action_id: str, action
+        self,
+        record_repo: ApprovalRecordRepository,
+        case_id: str,
+        action_id: str,
+        action,
     ) -> bool:
-        """检查单个 action 是否完成双签 (两个不同角色 approved)"""
-        async with async_session() as session:
-            repo = CaseRepository(session)
-            case = await repo.get(case_id)
-            if not case:
-                return False
-            # 简化: 双签 = 至少两个不同角色 approved (且无 rejected)
-            approval = case.approvals.get(action_id)
-            if not approval:
-                return False
-            if approval.decision == "rejected":
-                return False
-            # 垂直切片简化: 单个 ApprovalRecord 表示该 action 审批状态
-            # 真正双签需要存多条记录,这里用 decision=approved + requires_double_sign 检查
-            # 临时: 只要 decision=approved 即视为通过 (Phase2 改多记录)
-            return approval.decision == "approved"
+        """检查单个 action 是否完成双签/三签"""
+        records = await record_repo.list_by_action(case_id, action_id)
+        if not records:
+            return False
+        # 任一 rejected → 拒绝
+        if any(r["decision"] == "rejected" for r in records):
+            return False
+        # 需要的角色集
+        action_type = action.action_type.value
+        required_roles = (
+            CRITICAL_TRIPLE_ROLES
+            if action_type in CRITICAL_ACTIONS
+            else DOUBLE_SIGN_ROLES
+        )
+        approved_roles = {
+            r["approver_role"] for r in records if r["decision"] == "approved"
+        }
+        return required_roles.issubset(approved_roles)
 
-    async def _check_all_approved(self, case_id: str) -> bool:
-        """所有 L2 动作都 approved → True"""
-        async with async_session() as session:
-            repo = CaseRepository(session)
-            case = await repo.get(case_id)
-            if not case:
-                return False
-            l2_actions = [a for a in case.proposed_actions if a.approval_required]
-            if not l2_actions:
-                return True
-            for a in l2_actions:
-                approval = case.approvals.get(a.action_id)
-                if not approval or approval.decision != "approved":
-                    return False
+    async def _check_all_approved(
+        self, record_repo: ApprovalRecordRepository, case
+    ) -> bool:
+        """所有 L2 动作都完成双签 → True"""
+        l2_actions = [a for a in case.proposed_actions if a.approval_required]
+        if not l2_actions:
             return True
+        for a in l2_actions:
+            if not await self._check_action_fully_approved(
+                record_repo, case.case_id, a.action_id, a
+            ):
+                return False
+        return True
 
 
 approval_service = ApprovalService()

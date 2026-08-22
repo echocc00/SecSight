@@ -28,6 +28,18 @@ async def lifespan(app: FastAPI):
     # 启动: 建表 (开发用,生产走 alembic)
     if settings.env == "development":
         await init_db()
+        # 种子默认用户
+        try:
+            from app.db.database import async_session
+            from app.db.repositories import UserRepository
+
+            async with async_session() as session:
+                repo = UserRepository(session)
+                n = await repo.seed_defaults()
+                if n:
+                    structlog.get_logger().info(f"users.seeded count={n}")
+        except Exception as e:
+            structlog.get_logger().warning(f"users.seed_failed error={e}")
     # 密钥校验 (警告不阻塞启动)
     for w in validate_secrets():
         structlog.get_logger().warning(w)

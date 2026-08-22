@@ -13,6 +13,38 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.database import Base
 
 
+class UserModel(Base):
+    """用户表 (Phase2 从内存字典迁移)"""
+    __tablename__ = "users"
+
+    username: Mapped[str] = mapped_column(String(64), primary_key=True)
+    hashed_password: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(32), index=True)  # admin/analyst/approver/viewer
+    email: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ApprovalRecordModel(Base):
+    """审批记录表 (双签多记录)
+
+    一个 L2 动作可有多条审批记录 (incident_commander + approver 各一条),
+    达到双签要求才视为通过。
+    """
+    __tablename__ = "approval_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    case_id: Mapped[str] = mapped_column(String(64), ForeignKey("cases.case_id"), index=True)
+    action_id: Mapped[str] = mapped_column(String(64), index=True)
+    approver_role: Mapped[str] = mapped_column(String(32))  # incident_commander/approver/ciso
+    approver_user: Mapped[str] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(16))  # approved/rejected/defer
+    comment: Mapped[str] = mapped_column(Text, default="")
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+
 class CaseModel(Base):
     __tablename__ = "cases"
 

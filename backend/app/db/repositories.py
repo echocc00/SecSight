@@ -7,7 +7,14 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AuditLogModel, CaseModel, EvidencePackModel, PlaybookRunModel
+from app.db.models import (
+    ApprovalRecordModel,
+    AuditLogModel,
+    CaseModel,
+    EvidencePackModel,
+    PlaybookRunModel,
+    UserModel,
+)
 from app.models.schemas import (
     Action,
     Alert,
@@ -222,3 +229,184 @@ class AuditLogRepository:
             }
             for m in result.scalars()
         ]
+
+
+class UserRepository:
+    """用户仓储 — 替代内存字典,支持持久化"""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def create(
+        self,
+        username: str,
+        hashed_password: str,
+        role: str,
+        email: str | None = None,
+    ) -> dict:
+        model = UserModel(
+            username=username,
+            hashed_password=hashed_password,
+            role=role,
+            email=email,
+        )
+        self.session.add(model)
+        await self.session.commit()
+        return {"username": username, "role": role, "email": email}
+
+    async def get_by_username(self, username: str) -> dict | None:
+        model = await self.session.get(UserModel, username)
+        if not model:
+            return None
+        return {
+            "username": model.username,
+            "hashed_password": model.hashed_password,
+            "role": model.role,
+            "email": model.email,
+            "is_active": model.is_active,
+            "last_login_at": model.last_login_at,
+        }
+
+    async def list(self) -> list[dict]:
+        stmt = select(UserModel).order_by(UserModel.created_at)
+        result = await self.session.execute(stmt)
+        return [
+            {
+                "username": m.username,
+                "role": m.role,
+                "email": m.email,
+                "is_active": m.is_active,
+                "created_at": m.created_at,
+                "last_login_at": m.last_login_at,
+            }
+            for m in result.scalars()
+        ]
+
+    async def update_last_login(self, username: str) -> None:
+        model = await self.session.get(UserModel, username)
+        if model:
+            model.last_login_at = datetime.utcnow()
+            await self.session.commit()
+
+    async def seed_defaults(self) -> int:
+        """种子默认用户 (首次启动),返回创建数"""
+        from app.auth.service import Role, hash_password
+
+        defaults = [
+            ("admin", Role.ADMIN, "ChangeMe_123!"),
+            ("analyst", Role.ANALYST, "ChangeMe_123!"),
+            ("approver", Role.APPROVER, "ChangeMe_123!"),
+            ("viewer", Role.VIEWER, "ChangeMe_123!"),
+        ]
+        created = 0
+        for username, role, password in defaults:
+            existing = await self.get_by_username(username)
+            if existing:
+                continue
+            await self.create(
+                username=username,
+                hashed_password=hash_password(password),
+                role=role.value,
+            )
+            created += 1
+        return created
+
+
+class ApprovalRecordRepository:
+    """审批记录仓储 — 支持双签多记录"""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def add(
+        self,
+        case_id: str,
+        action_id: str,
+        approver_role: str,
+        approver_user: str,
+        decision: str,
+        comment: str = "",
+    ) -> dict:
+        model = ApprovalRecordModel(
+            case_id=case_id,
+            action_id=action_id,
+            approver_role=approver_role,
+            approver_user=approver_user,
+            decision=decision,
+            comment=comment,
+        )
+        self.session.add(model)
+        await self.session.commit()
+        return {
+            "id": model.id,
+            "action_id": action_id,
+            "approver_role": approver_role,
+            "approver_user": approver_user,
+            "decision": decision,
+            "comment": comment,
+            "ts": model.ts,
+        }
+
+    async def list_by_action(self, case_id: str, action_id: str) -> list[dict]:
+        stmt = (
+            select(ApprovalRecordModel)
+            .where(
+                ApprovalRecordModel.case_id == case_id,
+                ApprovalRecordModel.action_id == action_id,
+            )
+            .order_by(ApprovalRecordModel.ts)
+        )
+        result = await self.session.execute(stmt)
+        return [
+            {
+                "id": m.id,
+                "approver_role": m.approver_role,
+                "approver_user": m.approver_user,
+                "decision": m.decision,
+                "comment": m.comment,
+                "ts": m.ts,
+            }
+            for m in result.scalars()
+        ]
+
+    async def list_by_case(self, case_id: str) -> list[dict]:
+        stmt = (
+            select(ApprovalRecordModel)
+            .where(ApprovalRecordModel.case_id == case_id)
+            .order_by(ApprovalRecordModel.ts)
+        )
+        result = await self.session.execute(stmt)
+        return [
+            {
+                "action_id": m.action_id,
+                "approver_role": m.approver_role,
+                "approver_user": m.approver_user,
+                "decision": m.decision,
+                "comment": m.comment,
+                "ts": m.ts,
+            }
+            for m in result.scalars()
+        ]
+
+    async def has_role_approved(
+        self, case_id: str, action_id: str, role: str
+    ) -> bool:
+        """检查指定角色是否已 approved 该动作"""
+        stmt = select(ApprovalRecordModel).where(
+            ApprovalRecordModel.case_id == case_id,
+            ApprovalRecordModel.action_id == action_id,
+            ApprovalRecordModel.approver_role == role,
+            ApprovalRecordModel.decision == "approved",
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first() is not None
+
+    async def count_approvals(self, case_id: str, action_id: str) -> int:
+        """统计 approved 数量 (双签判定)"""
+        stmt = select(ApprovalRecordModel).where(
+            ApprovalRecordModel.case_id == case_id,
+            ApprovalRecordModel.action_id == action_id,
+            ApprovalRecordModel.decision == "approved",
+        )
+        result = await self.session.execute(stmt)
+        return len(result.scalars().all())

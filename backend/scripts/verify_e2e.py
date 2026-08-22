@@ -46,22 +46,24 @@ def run_scenario(client: httpx.Client, alert_type: str, expected_pb: str) -> boo
     print(f"  状态={case['status']} severity={j.get('severity')} confidence={j.get('confidence')} ttps={j.get('ttps')}")
     print(f"  动作数={len(case.get('proposed_actions',[]))} L2待审批={sum(1 for a in case.get('proposed_actions',[]) if a.get('approval_required'))}")
 
-    # 3. 批准所有 L2 动作
+    # 3. 批准所有 L2 动作 (双签: 每个动作提交所需角色)
     r = client.get(f"{BASE}/approvals/{case_id}/pending")
     pending = r.json()["data"]
     for action in pending:
-        ar = client.post(
-            f"{BASE}/approvals/{case_id}/actions/{action['action_id']}/approve",
-            json={
-                "approver_role": "incident_commander",
-                "approver_user": "alice",
-                "decision": "approved",
-                "comment": "e2e test",
-            },
-        )
-        res = ar.json()["data"]
-        if res.get("all_approved"):
-            print(f"  全部批准 → resume workflow")
+        roles = action.get("required_roles", ["incident_commander", "approver"])
+        for role in roles:
+            ar = client.post(
+                f"{BASE}/approvals/{case_id}/actions/{action['action_id']}/approve",
+                json={
+                    "approver_role": role,
+                    "approver_user": f"e2e-{role}",
+                    "decision": "approved",
+                    "comment": "e2e test",
+                },
+            )
+            res = ar.json()["data"]
+            if res.get("all_approved"):
+                print(f"  全部批准 → resume workflow")
 
     # 4. 验证最终状态
     time.sleep(1.0)

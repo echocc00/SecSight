@@ -229,12 +229,30 @@ async def plan_actions_node(state: dict) -> dict:
 
 
 async def human_approve_node(state: dict) -> dict:
-    """节点: L2 审批 gate — 标记 pending_approval,暂停等待人工"""
+    """节点: L2 审批 gate — 标记 pending_approval,推送飞书/钉钉通知,暂停等待人工"""
     case_id = state["case_id"]
     async with async_session() as session:
         repo = CaseRepository(session)
         await repo.update_status(case_id, CaseStatus.pending_approval)
+        case = await repo.get(case_id)
         await _audit("awaiting_approval", "system", case_id, {})
+
+        # 推送飞书/钉钉审批通知 (失败不阻塞)
+        if case:
+            from app.integrations.notify import notify_approval
+
+            import os
+
+            callback_base = os.environ.get("SECSIGHT_CALLBACK_BASE", "http://localhost:8000")
+            severity = case.judgment.severity.value if case.judgment else "medium"
+            for action in case.proposed_actions:
+                if action.approval_required:
+                    try:
+                        await notify_approval(
+                            case_id, action.action_id, action.action_type.value, severity, callback_base
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("approval.notify_failed", error=str(e))
     log.info("node.human_approve", case_id=case_id, note="workflow paused for L2 approval")
     return state
 

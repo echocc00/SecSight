@@ -134,10 +134,30 @@ _DEMO_USERS: dict[str, dict] = {
 
 
 def authenticate_user(username: str, password: str) -> dict | None:
+    """内存字典认证 (测试/mock 用,保留向后兼容)"""
     user = _DEMO_USERS.get(username)
     if not user or not verify_password(password, user["hashed_password"]):
         return None
     return user
+
+
+async def authenticate_user_async(username: str, password: str) -> dict | None:
+    """DB 认证 (生产),失败降级内存字典"""
+    try:
+        from app.db.database import async_session
+        from app.db.repositories import UserRepository
+
+        async with async_session() as session:
+            repo = UserRepository(session)
+            user = await repo.get_by_username(username)
+            if user and user["is_active"]:
+                if verify_password(password, user["hashed_password"]):
+                    await repo.update_last_login(username)
+                    return user
+            return None
+    except Exception:
+        # DB 未就绪 → 降级内存字典
+        return authenticate_user(username, password)
 
 
 def get_user(username: str) -> dict | None:
