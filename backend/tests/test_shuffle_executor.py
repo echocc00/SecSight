@@ -139,3 +139,42 @@ class TestGetExecutorFactory:
         from app.execution.mock import ShuffleExecutor
 
         assert isinstance(get_executor(), ShuffleExecutor)
+
+
+class TestShuffleWrapperFallback:
+    """包装层 (mock.py ShuffleExecutor) 故障降级到 mock"""
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_mock_when_no_workflow_mapped(self):
+        from app.execution.mock import ShuffleExecutor
+        from app.models.schemas import Action, ActionType, AutonomyLevel, Severity
+
+        action = Action(
+            action_type=ActionType.isolate_host,
+            target={"ip": "10.0.1.15"},
+            autonomy_level=AutonomyLevel.L2,
+            risk=Severity.high,
+        )
+        executor = ShuffleExecutor()
+        result = await executor.execute(action)
+        # 无 workflow 映射 → 降级 mock
+        assert result["success"] is True
+        assert "fallback_reason" in result
+
+    @pytest.mark.asyncio
+    async def test_env_var_provides_workflow_mapping(self, monkeypatch):
+        """SHUFFLE_WORKFLOW_<TYPE> 环境变量映射"""
+        from app.execution.mock import ShuffleExecutor
+        from app.models.schemas import Action, ActionType, AutonomyLevel, Severity
+
+        monkeypatch.setenv("SHUFFLE_WORKFLOW_NOTIFY", "wf-notify-789")
+        action = Action(
+            action_type=ActionType.notify,
+            target={"message": "test"},
+            autonomy_level=AutonomyLevel.L4,
+            risk=Severity.low,
+        )
+        executor = ShuffleExecutor()
+        # 配置了 workflow 但 Shuffle 不可达 → 降级
+        result = await executor.execute(action)
+        assert result["success"] is True

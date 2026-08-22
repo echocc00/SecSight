@@ -78,6 +78,10 @@ def _parse_wazuh_alert(data: dict) -> Alert:
     )
 
 
+# 公开别名
+parse_wazuh_alert = _parse_wazuh_alert
+
+
 class WazuhClient:
     """Wazuh Manager API 客户端 (REST,GPL 隔离)"""
 

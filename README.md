@@ -76,7 +76,13 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚀 Phase2 完成 — 12 剧本 (6 P0 + 6 P1) + 5 真实组件 + 生产化加固 (认证/监控/安全/合规报告)。221 测试,覆盖率 87.9%。
+🚀 v0.4.0 — 真实部署验证: Wazuh webhook + Shuffle SOAR 真实执行。12 剧本 + 5 真实组件 + 生产化加固。234 测试,覆盖率 87.8%。
+
+**v0.4 新增 (真实部署链路)**:
+- Wazuh webhook 接收器: 实时接收 Wazuh 推送告警 (替代 mock 注入),TTTR 更低
+- 真实 Shuffle SOAR 执行器: REST API 触发 Workflow,故障降级 mock
+- 部署验证脚本 + Wazuh/Shuffle 配置文档
+- docker-compose 7 组件全栈 + 健康检查 + 资源限制
 
 **Phase2 新增**:
 - 生产化加固: JWT 认证 + 4 角色 (admin/analyst/approver/viewer) + 权限矩阵

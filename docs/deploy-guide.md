@@ -96,6 +96,59 @@ sudo systemctl start wazuh-agent
 # Windows: 下载 https://packages.wazuh.com/4.x/windows/ 安装
 ```
 
+## 5b. Wazuh → SecSight Webhook (实时告警推送)
+
+让 Wazuh 把告警实时推送到 SecSight,而不是 SecSight 轮询 (TTTR 更低):
+
+```bash
+# 进入 Wazuh manager 容器
+docker compose exec wazuh-manager bash
+
+# 编辑 /var/ossec/etc/ossec.conf,在 <ossec_config> 内加 custom integration:
+cat >> /var/ossec/etc/ossec.conf <<'XML'
+<integration>
+  <name>custom-webhook</name>
+  <hook_url>http://secsight-backend:8000/api/alerts/wazuh-webhook</hook_url>
+  <rule_id>5710,5712,550,591,31151</rule_id>
+  <alert_format>json</alert_format>
+</integration>
+XML
+
+# 重启 manager
+/var/ossec/bin/wazuh-control restart
+```
+
+或用 SecSight 轮询模式 (无需改 Wazuh 配置):
+```bash
+# 定时轮询 Wazuh API
+curl -X POST http://localhost:8000/api/alerts/wazuh/poll?limit=20
+```
+
+## 5c. Shuffle Workflow 配置 (SOAR 执行)
+
+启用真实 Shuffle 执行 (替代 mock):
+
+1. **创建 Workflow**: 访问 http://localhost:3001,登录后创建以下 Workflow:
+   - `isolate_host` — 调防火墙 API 隔离主机
+   - `block_ip` — 封禁 IP
+   - `kill_process` — Wazuh active response kill 进程
+   - 等 (见 SHUFFLE_WORKFLOW_<TYPE>)
+
+2. **填入 Workflow ID**: 在 .env 加
+   ```bash
+   ENABLE_SHUFFLE=true
+   SHUFFLE_WORKFLOW_ISOLATE_HOST=<workflow-id-from-shuffle>
+   SHUFFLE_WORKFLOW_BLOCK_IP=<workflow-id>
+   # ...
+   ```
+
+3. **验证**: 端到端测试
+   ```bash
+   SECSIGHT_MOCK_MODE=false ENABLE_SHUFFLE=true python scripts/verify_real_deploy.py
+   ```
+
+未配置 Workflow 的动作自动降级 mock (不阻塞闭环)。
+
 ## 6. 健康检查
 
 ```bash
