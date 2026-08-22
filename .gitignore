@@ -94,3 +94,4 @@ wazuh_data/
 *.key
 secrets/
 credentials.json
+*.tsbuildinfo
