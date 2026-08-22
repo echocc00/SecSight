@@ -200,7 +200,48 @@ docker compose up -d --force-recreate secsight-backend secsight-frontend
 # 数据卷保留,无需重新入库
 ```
 
-## 10. 资源调优
+## 10. 实跑冒烟验证记录 (2026-08-22)
+
+已验证的真实链路 (docker 容器 + 真实 backend):
+
+| 链路 | 验证结果 |
+|---|---|
+| OpenSearch 索引+检索 | ✅ 注入告警 → 索引 → 全文搜索命中 |
+| Wazuh webhook 接收 | ✅ 真实 Wazuh 格式 JSON → Case + 剧本匹配 |
+| 国产设备 webhook | ✅ 奇安信格式 → Case + web_attack 剧本匹配 |
+| 双签审批闭环 | ✅ 三签 (isolate_host 需 ciso) + 双签 (kill_process) 正确判定 |
+| 完整执行链路 | ✅ resolved, TTTR 51s, 3/3 动作执行, Evidence Pack |
+| 合规报告生成 | ✅ Markdown 报告含 8 章节 |
+
+验证命令:
+```bash
+# 起 OpenSearch 容器
+docker run -d --name secsight-os -p 9200:9200 \
+  -e discovery.type=single-node -e OPENSEARCH_INITIAL_ADMIN_PASSWORD=SecSightAdmin123 \
+  opensearchproject/opensearch:2.13.0
+
+# 起 backend 连 OpenSearch
+ENABLE_OPENSEARCH=true OPENSEARCH_URL=https://localhost:9200 \
+  OPENSEARCH_USER=admin OPENSEARCH_PASSWORD=SecSightAdmin123 \
+  uvicorn app.main:app --port 8001
+
+# 注入 → 搜索
+curl -X POST localhost:8001/api/alerts/inject -d '{"alert_type":"xmrig_process"}'
+curl 'localhost:8001/api/alerts/search?q=xmrig'
+```
+
+待验证 (需完整 docker compose 环境):
+- Wazuh Manager custom integration 推送 (需 Wazuh 容器 + ossec.conf 配置)
+- Shuffle Workflow 执行 (需 Shuffle UI 创建 workflow)
+- Qdrant RAG (需知识入库)
+```bash
+git pull
+docker compose build secsight-backend secsight-frontend
+docker compose up -d --force-recreate secsight-backend secsight-frontend
+# 数据卷保留,无需重新入库
+```
+
+## 11. 资源调优
 
 若内存不足,按优先级降级:
 1. 先停 Grafana/Prometheus (非核心)
