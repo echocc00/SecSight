@@ -3,6 +3,8 @@
 > AI 辅助的 SecOps Copilot + 自动处置 SOAR 引擎。
 > 监控业务系统 → AI 研判 → 半自动应急响应 → 知识沉淀。
 
+[![Latest Release](https://img.shields.io/github/v/release/echocc00/SecSight?display_name=tag&style=flat-square)](https://github.com/echocc00/SecSight/releases/latest)
+
 > 💼 **商业授权 / Commercial licensing**
 >
 > 本项目以开源协议发布(详见 [LICENSE](./LICENSE)),你可自由用于个人/企业内部项目。
@@ -96,7 +98,7 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚀 v0.4.0 — 真实部署验证: Wazuh webhook + Shuffle SOAR 真实执行。12 剧本 + 5 真实组件 + 生产化加固。234 测试,覆盖率 87.8%。
+🚀 v0.5.1 — License 合规与商业授权: Wazuh webhook + Shuffle SOAR 真实执行。12 剧本 + 5 真实组件 + 生产化加固。234 测试,覆盖率 87.8%。
 
 **v0.4 新增 (真实部署链路)**:
 - Wazuh webhook 接收器: 实时接收 Wazuh 推送告警 (替代 mock 注入),TTTR 更低
