@@ -142,6 +142,8 @@ flowchart LR
 | [docs/research/](docs/research/) | 7 份子领域调研报告 |
 
 ## 快速开始
+> 📘 想要 **5 分钟完整跑通**?[看 `docs/getting-started.md`](docs/getting-started.md) — 涵盖 docker / 数据库初始化 / 验证清单。
+
 
 ```bash
 # 1. 配置环境变量
