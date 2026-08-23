@@ -4,6 +4,8 @@
 > 监控业务系统 → AI 研判 → 半自动应急响应 → 知识沉淀。
 
 [![Latest Release](https://img.shields.io/github/v/release/echocc00/SecSight?display_name=tag&style=flat-square)](https://github.com/echocc00/SecSight/releases/latest)
+[![License](https://img.shields.io/github/license/echocc00/SecSight?style=flat-square)](./LICENSE)
+[![License Check](https://img.shields.io/github/actions/workflow/status/echocc00/SecSight/license-check.yml?branch=main&style=flat-square&label=license)](https://github.com/echocc00/SecSight/actions/workflows/license-check.yml)
 
 > 💼 **商业授权 / Commercial licensing**
 >
