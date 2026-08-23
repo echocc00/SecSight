@@ -223,3 +223,8 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 | SSH 暴破 | T1110 | ✓ | — |
 | 日志合规 | T1562 | — | ✓ (无 L2 自动执行) |
 | 服务崩溃 | T1489 | ✓ | — |
+
+
+---
+
+<sub>📋 本 README 遵循 [echocc00/README-TEMPLATE.md](https://github.com/echocc00/.github/blob/main/README-TEMPLATE.md) 写作规范</sub>
