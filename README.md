@@ -54,6 +54,83 @@
 - **私有化优先**,AGPL/GPL 组件进程隔离,主体可闭源商业化
 - **国产化适配**,境内 LLM + 等保 2.0 合规
 
+## 架构
+
+```mermaid
+flowchart LR
+    classDef frontend fill:#083344,stroke:#22d3ee,color:#fff
+    classDef backend fill:#064e3b,stroke:#34d399,color:#fff
+    classDef storage fill:#4c1d95,stroke:#a78bfa,color:#fff
+    classDef security fill:#881337,stroke:#fb7185,color:#fff
+    classDef external fill:#1e293b,stroke:#94a3b8,color:#fff
+    classDef obs fill:#fb923c,stroke:#fb923c,color:#fff
+
+    Asset[("🏢 业务资产<br/>≤500 中小企业")]:::external
+
+    subgraph EDR["端到端检测 (多源异构)"]
+        Wazuh["Wazuh<br/>主机 EDR"]:::security
+        Suricata["Suricata<br/>网络 IDS"]:::security
+        Falco["Falco<br/>容器运行时"]:::security
+        Arkime["Arkime<br/>全流量"]:::security
+        CrowdSec["CrowdSec<br/>协作 IDS"]:::security
+    end
+
+    Vector["Vector<br/>日志聚合"]:::obs
+    SIEM[("OpenSearch<br/>ECS Schema")]:::storage
+
+    Threat["OpenCTI CE<br/>威胁情报"]:::security
+
+    Webhook["Wazuh Webhook<br/>实时告警推送"]:::backend
+
+    subgraph SecSightCore["SecSight 主体 (AI 编排大脑)"]
+        Gateway["FastAPI 网关<br/>(JWT + 4 角色 RBAC)"]:::backend
+        SecSight[("LangGraph + LiteLLM<br/>5 级自主性 · 双签")]:::backend
+        Playbooks["22 剧本 (按业务系统)<br/>P0:勒索/挖矿/持久化/暴破/<br/>日志合规/服务崩溃"]:::backend
+        KB["4 层知识库<br/>L0 框架 / L1 战术 /<br/>L2 剧本 / L3 案例"]:::storage
+        Qdrant[("Qdrant<br/>向量库")]:::storage
+    end
+
+    Shuffle["Shuffle SOAR<br/>(AGPL 隔离部署)"]:::security
+    IRIS["DFIR-IRIS<br/>(LGPL-3.0 案件)"]:::security
+
+    subgraph Vuln["漏洞 / 攻击面"]
+        Nuclei[Nuclei]:::security
+        Trivy[Trivy]:::security
+        KubeHound[KubeHound]:::security
+        Nmap[Nmap]:::security
+    end
+
+    Dashboard["前端<br/>Vite/React/Antd"]:::frontend
+
+    Asset --> Wazuh
+    Asset --> Suricata
+    Asset --> Falco
+    Asset --> Arkime
+
+    Wazuh --> Vector
+    Suricata --> Vector
+    Falco --> Vector
+
+    Vector --> SIEM
+    CrowdSec --> SIEM
+    Threat --> SIEM
+
+    Wazuh -.-> Webhook
+    Webhook --> SecSight
+
+    SecSight --> Playbooks
+    SecSight --> KB
+    KB <--> Qdrant
+
+    Playbooks -.->|执行动作| Shuffle
+    Playbooks -->|立案 / 跟踪| IRIS
+
+    SecSight --> Vuln
+    SIEM --> SecSight
+    Gateway --> Dashboard
+    SecSight --> Gateway
+```
+
 ## 文档
 
 | 文档 | 说明 |
