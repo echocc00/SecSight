@@ -217,27 +217,79 @@ async def search_alerts(
     q: str,
     size: int = 20,
     hours: int = 24,
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
-    """全文检索告警 (OpenSearch)
+    """全文检索告警 (OpenSearch 优先,未启用时降级查 PG)
 
-    搜索进程名/IP/规则/消息内容,替代 PG JSONB 查询。
-    需 ENABLE_OPENSEARCH=true,否则返回空。
+    搜索进程名/IP/规则/消息内容。OpenSearch 启用走向量检索,
+    否则降级扫描 Case.alerts JSON (dev/mock 模式可用)。
     """
     from app.core.config import settings
 
-    if not settings.enable_opensearch:
-        return ApiResponse(
-            success=False,
-            error="OpenSearch 未启用 (设 ENABLE_OPENSEARCH=true)",
-        )
-    try:
-        from app.integrations.opensearch import get_opensearch
+    if settings.enable_opensearch:
+        try:
+            from app.integrations.opensearch import get_opensearch
 
-        client = get_opensearch()
-        results = await client.search_alerts(query=q, size=size, time_range_hours=hours)
-        return ApiResponse(success=True, data={"query": q, "count": len(results), "hits": results})
-    except Exception as e:  # noqa: BLE001
-        return ApiResponse(success=False, error=f"OpenSearch 搜索失败: {e}")
+            client = get_opensearch()
+            results = await client.search_alerts(query=q, size=size, time_range_hours=hours)
+            return ApiResponse(
+                success=True,
+                data={"query": q, "source": "opensearch", "count": len(results), "hits": results},
+            )
+        except Exception as e:  # noqa: BLE001
+            # OpenSearch 故障降级 PG,不阻断搜索
+            import structlog
+
+            structlog.get_logger().warning("alert.search.os_fallback", error=str(e))
+
+    # PG fallback: 扫描近 N 小时 Case 的 alerts JSON
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.db.models import CaseModel
+
+    since = datetime.utcnow() - timedelta(hours=hours)
+    needle = q.lower()
+    stmt = (
+        select(CaseModel)
+        .where(CaseModel.created_at >= since)
+        .order_by(CaseModel.created_at.desc())
+        .limit(200)
+    )
+    result = await session.execute(stmt)
+    hits: list[dict] = []
+    for m in result.scalars():
+        for a in (m.alerts or []):
+            blob = " ".join(
+                str(v)
+                for v in [
+                    a.get("message", ""),
+                    a.get("src_ip", ""),
+                    a.get("dst_ip", ""),
+                    a.get("rule_id", ""),
+                    (a.get("raw") or {}).get("process_name", ""),
+                    a.get("source", ""),
+                ]
+            ).lower()
+            if needle in blob:
+                hits.append(
+                    {
+                        "case_id": m.case_id,
+                        "case_status": m.status,
+                        "playbook_id": m.playbook_id,
+                        "alert": a,
+                        "matched_at": m.created_at.isoformat(),
+                    }
+                )
+                if len(hits) >= size:
+                    break
+        if len(hits) >= size:
+            break
+    return ApiResponse(
+        success=True,
+        data={"query": q, "source": "postgres_fallback", "count": len(hits), "hits": hits},
+    )
 
 
 @router.get("/devices/supported", response_model=ApiResponse)

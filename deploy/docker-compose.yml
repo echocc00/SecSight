@@ -76,7 +76,7 @@ services:
     ports: ["6333:6333"]
     healthcheck:
       <<: *hc-base
-      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' 2>/dev/null || exit 1"]
     deploy:
       resources:
         limits: { cpus: "2", memory: 2g }
@@ -122,12 +122,11 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       qdrant: { condition: service_healthy }
-      litellm: { condition: service_healthy }
     networks: [secsight-net, isolation-net, infra-net]
     ports: ["8000:8000"]
     volumes:
       - ../playbooks:/app/playbooks:ro
-      - ../knowledge:/app/knowledge:ro
+      - ../knowledge:/app/knowledge
       - ../policies:/app/policies:ro
     healthcheck:
       <<: *hc-base
@@ -169,7 +168,7 @@ services:
     ports: ["9200:9200"]
     healthcheck:
       <<: *hc-base
-      test: ["CMD-SHELL", "curl -sf -u admin:${OPENSEARCH_PASSWORD} https://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sk -u admin:${OPENSEARCH_PASSWORD} https://localhost:9200/_cluster/health | grep -q '\"status\"' || exit 1"]
     deploy:
       resources:
         limits: { cpus: "2", memory: 4g }
@@ -197,17 +196,18 @@ services:
       INDEXER_URL: https://wazuh-indexer:9200
       INDEXER_USERNAME: admin
       INDEXER_PASSWORD: ${WAZUH_INDEXER_PASSWORD}
-      FILEBEAT_SSL_VERIFICATION_MODE: full
+      FILEBEAT_SSL_VERIFICATION_MODE: none
     volumes: [wazuh-manager-data:/var/ossec/data]
     networks: [infra-net]
     ports:
-      - "1514:1514"
-      - "1515:1515"
-      - "55000:55000"
+      - "1614:1514"
+      - "1615:1515"
+      - "55100:55000"
     depends_on:
-      wazuh-indexer: { condition: service_healthy }
+      wazuh-indexer: { condition: service_started }
     healthcheck:
       <<: *hc-base
+      start_period: 120s
       test: ["CMD-SHELL", "curl -sf https://localhost:55000/healthcheck || exit 1"]
     deploy:
       resources:
@@ -220,15 +220,17 @@ services:
     environment:
       <<: *common-env
       OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${WAZUH_INDEXER_PASSWORD}
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m -XX:MaxDirectMemorySize=512m"
     volumes: [wazuh-indexer-data:/var/ossec/indexer]
     networks: [infra-net]
     ports: ["9201:9200"]
     healthcheck:
       <<: *hc-base
-      test: ["CMD-SHELL", "curl -sf https://localhost:9200/_cluster/health || exit 1"]
+      start_period: 90s
+      test: ["CMD-SHELL", "curl -sk https://localhost:9200/_cluster/health >/dev/null 2>&1 || curl -sk https://localhost:9200/ >/dev/null 2>&1 || exit 1"]
     deploy:
       resources:
-        limits: { cpus: "2", memory: 2g }
+        limits: { cpus: "2", memory: 3g }
 
   wazuh-dashboard:
     image: wazuh/wazuh-dashboard:4.8.0

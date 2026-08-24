@@ -96,3 +96,7 @@ secrets/
 credentials.json
 *.tsbuildinfo
 *.imported.yaml
+
+# 运行时生成的知识沉淀产物 (L3→L1)
+knowledge/L1_tactic/derived/
+backend/knowledge/

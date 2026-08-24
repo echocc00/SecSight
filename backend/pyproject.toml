@@ -51,6 +51,12 @@ dependencies = [
     "cryptography>=42.0.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
+    "bcrypt==4.0.1",  # 锁定: 4.x + passlib 在 password>72 bytes 时抛 ValueError
+    "slowapi>=0.1.9",  # 速率限制
+
+    # 工具
+    "jinja2>=3.1.0",  # 合规报告模板
+    "numpy>=1.26.0",  # embedding 向量化
 ]
 
 [project.optional-dependencies]

@@ -7,13 +7,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Python 依赖
+# Python 依赖 + 应用代码 (editable 安装需源码在场)
 COPY pyproject.toml ./
+COPY app/ ./app/
 RUN pip install --no-cache-dir uv && \
     uv pip install --system -e ".[dev]" || pip install --no-cache-dir -e ".[dev]"
-
-# 应用代码
-COPY app/ ./app/
 
 EXPOSE 8000
 
