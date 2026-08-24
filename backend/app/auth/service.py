@@ -107,8 +107,7 @@ def require_permission(perm: str):
     return checker
 
 
-# 简化用户存储 (Phase2 后期接 DB)
-# TODO: 迁移到 Postgres users 表
+# 内存字典用户 (DB 未就绪时的降级 fallback,生产走 authenticate_user_async)
 _DEMO_USERS: dict[str, dict] = {
     "admin": {
         "username": "admin",

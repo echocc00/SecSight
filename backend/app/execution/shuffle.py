@@ -59,7 +59,7 @@ class ShuffleExecutor(ActionExecutor):
         self.workflow_map = workflow_map or _DEFAULT_WORKFLOW_MAP
         self.timeout = timeout
 
-    async def execute(self, action: Action) -> dict:
+    async def execute(self, action: Action, case_id: str | None = None) -> dict:
         """触发 Shuffle Workflow 执行处置动作"""
         action_type = action.action_type.value
         workflow_id = self.workflow_map.get(action_type, "")
@@ -77,6 +77,7 @@ class ShuffleExecutor(ActionExecutor):
                     "target": action.target,
                     "action_id": action.action_id,
                     "playbook_id": action.playbook_id,
+                    "case_id": case_id,
                 },
                 ensure_ascii=False,
             ),

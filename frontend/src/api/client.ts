@@ -69,6 +69,14 @@ export const api = {
   listAlertTypes: () =>
     client.get<ApiResponse<{ types: string[] }>>("/alerts/types").then((r) => r.data.data),
 
+  searchAlerts: (q: string, size: number = 20, hours: number = 24) =>
+    client
+      .get<ApiResponse<{ query: string; source: string; count: number; hits: any[] }>>(
+        "/alerts/search",
+        { params: { q, size, hours } }
+      )
+      .then((r) => r.data.data),
+
   wazuhWebhook: (alert: Record<string, any>) =>
     client.post<ApiResponse>("/alerts/wazuh-webhook", alert).then((r) => r.data.data),
 
@@ -133,4 +141,8 @@ export const api = {
   // 审批记录 (双签进度)
   listApprovalRecords: (caseId: string) =>
     client.get<ApiResponse<any[]>>(`/approvals/${caseId}/records`).then((r) => r.data.data),
+
+  // 知识沉淀 (L3→L1)
+  sedimentCase: (caseId: string) =>
+    client.post<ApiResponse<any>>(`/knowledge/${caseId}/sediment`).then((r) => r.data.data),
 };

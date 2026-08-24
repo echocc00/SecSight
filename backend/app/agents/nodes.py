@@ -283,7 +283,7 @@ async def execute_node(state: dict) -> dict:
                 status="executing",
                 started_at=datetime.utcnow(),
             )
-            result = await executor.execute(action)
+            result = await executor.execute(action, case_id=case_id)
             step.status = "success" if result.get("success") else "failed"
             step.finished_at = datetime.utcnow()
             step.result = result

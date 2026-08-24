@@ -7,6 +7,7 @@ import {
   LogoutOutlined,
   UserOutlined,
   RobotOutlined,
+  SearchOutlined,
 } from "@ant-design/icons";
 import { useState, useEffect, Suspense, lazy } from "react";
 import { auth } from "./api/client";
@@ -19,6 +20,7 @@ const Cases = lazy(() => import("./pages/Cases"));
 const CaseDetail = lazy(() => import("./pages/CaseDetail"));
 const Playbooks = lazy(() => import("./pages/Playbooks"));
 const Agents = lazy(() => import("./pages/Agents"));
+const AlertSearch = lazy(() => import("./pages/AlertSearch"));
 const Login = lazy(() => import("./pages/Login"));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -83,6 +85,11 @@ export default function App() {
                         label: <Link to="/cases">案件</Link>,
                       },
                       {
+                        key: "alert-search",
+                        icon: <SearchOutlined />,
+                        label: <Link to="/alerts/search">告警搜索</Link>,
+                      },
+                      {
                         key: "playbooks",
                         icon: <BookOutlined />,
                         label: <Link to="/playbooks">剧本</Link>,
@@ -122,6 +129,7 @@ export default function App() {
                         <Route path="/" element={<Dashboard />} />
                         <Route path="/cases" element={<Cases />} />
                         <Route path="/cases/:caseId" element={<CaseDetail />} />
+                        <Route path="/alerts/search" element={<AlertSearch />} />
                         <Route path="/playbooks" element={<Playbooks />} />
                         <Route path="/agents" element={<Agents />} />
                       </Routes>

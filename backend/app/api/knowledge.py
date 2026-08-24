@@ -29,5 +29,7 @@ async def sediment(case_id: str) -> ApiResponse:
             "rules_generated": len(result["generated_rules"]),
             "generated_rules": result["generated_rules"],
             "l1_injection": result["l1_injection"],
+            "qdrant_points": result.get("qdrant_points", 0),
+            "l1_yaml_path": result.get("l1_yaml_path"),
         },
     )

@@ -18,13 +18,13 @@ class ActionExecutor(ABC):
     """处置执行抽象"""
 
     @abstractmethod
-    async def execute(self, action: Action) -> dict: ...
+    async def execute(self, action: Action, case_id: str | None = None) -> dict: ...
 
 
 class MockExecutor(ActionExecutor):
     """mock 执行: 打日志 + 审计 + 返回 success (替代 Shuffle)"""
 
-    async def execute(self, action: Action) -> dict:
+    async def execute(self, action: Action, case_id: str | None = None) -> dict:
         task_id = str(uuid4())
         log.info(
             "mock.execute",
@@ -39,7 +39,7 @@ class MockExecutor(ActionExecutor):
             await audit.record(
                 action=f"execute:{action.action_type.value}",
                 actor="mock-executor",
-                case_id=None,  # TODO: 传 case_id
+                case_id=case_id,
                 detail={
                     "action_id": action.action_id,
                     "target": action.target,
@@ -62,7 +62,7 @@ class ShuffleExecutor(ActionExecutor):
     降级: 调用失败/超时/workflow 未配置 → 回退 MockExecutor,保证闭环。
     """
 
-    async def execute(self, action: Action) -> dict:
+    async def execute(self, action: Action, case_id: str | None = None) -> dict:
         from app.core.config import settings
         from app.execution.shuffle import ShuffleExecutor as _Real, ShuffleError
 
@@ -85,10 +85,10 @@ class ShuffleExecutor(ActionExecutor):
                 workflow_map=workflow_map or None,
                 timeout=30,
             )
-            return await real.execute(action)
+            return await real.execute(action, case_id=case_id)
         except ShuffleError as e:
             log.warning("shuffle.fallback_to_mock", action=action.action_type.value, error=str(e))
-            mock_result = await MockExecutor().execute(action)
+            mock_result = await MockExecutor().execute(action, case_id=case_id)
             mock_result["fallback_reason"] = f"Shuffle: {e}"
             return mock_result
 

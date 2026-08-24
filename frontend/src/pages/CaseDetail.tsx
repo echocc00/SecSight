@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Card, Descriptions, Tag, Tabs, message, Button, Progress, Space, Empty } from "antd";
-import { DownloadOutlined, FileTextOutlined, ReloadOutlined } from "@ant-design/icons";
+import { Card, Descriptions, Tag, Tabs, message, Button, Progress, Space, Empty, Modal, Alert, List, Typography } from "antd";
+import { DownloadOutlined, FileTextOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { api } from "../api/client";
 import ApprovalPanel from "../components/ApprovalPanel";
 import Timeline from "../components/Timeline";
@@ -24,6 +24,8 @@ export default function CaseDetail() {
   const [caseData, setCaseData] = useState<any>(null);
   const [evidence, setEvidence] = useState<any>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [sedimentLoading, setSedimentLoading] = useState(false);
+  const [sedimentResult, setSedimentResult] = useState<any>(null);
 
   const load = async () => {
     if (!caseId) return;
@@ -62,6 +64,19 @@ export default function CaseDetail() {
     }
   };
 
+  const triggerSediment = async () => {
+    setSedimentLoading(true);
+    try {
+      const res = await api.sedimentCase(caseId!);
+      setSedimentResult(res);
+      message.success(`知识沉淀完成: 生成 ${res.rules_generated} 条检测规则`);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || "知识沉淀失败");
+    } finally {
+      setSedimentLoading(false);
+    }
+  };
+
   if (!caseData) return <Card loading />;
 
   const judgment = caseData.judgment;
@@ -80,6 +95,15 @@ export default function CaseDetail() {
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={load} size="small">刷新</Button>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={sedimentLoading}
+              onClick={triggerSediment}
+              size="small"
+              disabled={!judgment}
+            >
+              知识沉淀
+            </Button>
             <Button
               icon={<DownloadOutlined />}
               loading={reportLoading}
@@ -175,7 +199,6 @@ export default function CaseDetail() {
               <ApprovalPanel
                 caseId={caseId!}
                 actions={caseData.proposed_actions}
-                approvals={caseData.approvals}
                 onApproved={load}
               />
             ),
@@ -210,6 +233,65 @@ export default function CaseDetail() {
           },
         ]}
       />
+
+      <Modal
+        title="知识沉淀结果 (L3 案例 → L1 战术)"
+        open={!!sedimentResult}
+        onCancel={() => setSedimentResult(null)}
+        footer={null}
+        width={720}
+      >
+        {sedimentResult && (
+          <>
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginBottom: 16 }}
+              message={`生成 ${sedimentResult.rules_generated} 条检测规则`}
+              description={
+                <Space direction="vertical" size={2}>
+                  <span>Qdrant L3 入库点数: {sedimentResult.qdrant_points ?? 0}</span>
+                  <Typography.Text copyable={{ text: sedimentResult.l1_yaml_path || "未写入" }}>
+                    L1 YAML: {sedimentResult.l1_yaml_path || "未写入"}
+                  </Typography.Text>
+                </Space>
+              }
+            />
+            <Descriptions column={2} size="small" bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="TTPs" span={2}>
+                <Space wrap>
+                  {(sedimentResult.ttps || []).map((t: string) => (
+                    <Tag key={t} color="geekblue">{t}</Tag>
+                  ))}
+                </Space>
+              </Descriptions.Item>
+              <Descriptions.Item label="IoCs" span={2}>
+                <pre style={{ margin: 0, fontSize: 12 }}>
+                  {JSON.stringify(sedimentResult.iocs, null, 2)}
+                </pre>
+              </Descriptions.Item>
+            </Descriptions>
+            <Typography.Text strong>生成的检测规则</Typography.Text>
+            <List
+              size="small"
+              bordered
+              style={{ marginTop: 8 }}
+              dataSource={sedimentResult.generated_rules || []}
+              renderItem={(r: any) => (
+                <List.Item>
+                  <Space direction="vertical" size={1} style={{ width: "100%" }}>
+                    <Space>
+                      <Tag color="blue">{r.rule_id}</Tag>
+                      <Tag>{r.status}</Tag>
+                    </Space>
+                    <span>{r.title}</span>
+                  </Space>
+                </List.Item>
+              )}
+            />
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
