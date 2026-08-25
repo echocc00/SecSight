@@ -57,11 +57,87 @@ class OpenSearchClient:
         ts = ts or datetime.utcnow()
         return f"secsiem-alerts-{ts.strftime('%Y.%m.%d')}"
 
+    # 显式 mapping (ECS 子集) — 避免动态映射字段类型不可控 (如 rule_level 被推断为 long)
+    _INDEX_MAPPING: dict = {
+        "mappings": {
+            "dynamic": False,  # 严格模式: 未声明字段不索引 (防止脏字段污染)
+            "properties": {
+                "@timestamp": {"type": "date"},
+                "event": {
+                    "properties": {
+                        "id": {"type": "keyword"},
+                        "action": {"type": "text"},
+                        "severity": {"type": "keyword"},
+                        "original": {
+                            "properties": {
+                                "process_name": {"type": "text"},
+                                "cmdline": {"type": "text"},
+                            }
+                        },
+                    }
+                },
+                "source": {
+                    "properties": {
+                        "ip": {"type": "ip"},
+                        "user": {"properties": {"name": {"type": "keyword"}}},
+                    }
+                },
+                "destination": {"properties": {"ip": {"type": "ip"}}},
+                "host": {
+                    "properties": {
+                        "name": {"type": "keyword"},
+                        "id": {"type": "keyword"},
+                    }
+                },
+                "rule": {
+                    "properties": {
+                        "id": {"type": "keyword"},
+                        "level": {"type": "integer"},
+                    }
+                },
+                "threat": {
+                    "properties": {
+                        "tactic": {"properties": {"name": {"type": "keyword"}}},
+                        "technique": {"properties": {"id": {"type": "keyword"}}},
+                    }
+                },
+                "secsight": {
+                    "properties": {
+                        "source": {"type": "keyword"},
+                        "ingested_at": {"type": "date"},
+                    }
+                },
+            },
+        }
+    }
+
+    async def _ensure_index(self, index: str) -> None:
+        """首次写入前创建索引 + 显式 mapping (幂等)"""
+        client = await self._get_client()
+        try:
+            resp = await client.head(f"/{index}")
+            if resp.status_code == 200:
+                return  # 索引已存在
+        except Exception:  # noqa: BLE001 - 网络错误等不阻塞,继续尝试创建
+            pass
+        try:
+            resp = await client.put(f"/{index}", json=self._INDEX_MAPPING)
+            if resp.status_code in (200, 201):
+                log.info("opensearch.index_created", index=index)
+            elif resp.status_code == 400:
+                # 索引已存在 (resource_already_exists_exception),正常
+                pass
+            else:
+                log.warning("opensearch.ensure_index_unexpected", index=index, status=resp.status_code)
+        except Exception as e:  # noqa: BLE001 - 索引已存在等竞态不阻塞
+            log.warning("opensearch.ensure_index_failed", index=index, error=str(e))
+
     async def index_alert(self, alert: Alert) -> str:
         """索引告警到 OpenSearch"""
         client = await self._get_client()
         doc = self._build_doc(alert)
         index = self._index_name(alert.ts)
+        await self._ensure_index(index)
         try:
             resp = await client.post(
                 f"/{index}/_doc",
@@ -106,12 +182,13 @@ class OpenSearchClient:
     ) -> list[dict]:
         """全文检索告警 (进程名/IP/规则/消息)"""
         client = await self._get_client()
+        # query_string 自动处理 IP/文本类型,避免 term 查询对 IP 字段传非 IP 值报错
         body = {
             "query": {
                 "bool": {
                     "must": [
                         {
-                            "multi_match": {
+                            "query_string": {
                                 "query": query,
                                 "fields": [
                                     "event.action^2",
@@ -122,6 +199,7 @@ class OpenSearchClient:
                                     "host.name",
                                     "rule.id",
                                 ],
+                                "lenient": True,  # 宽松: IP 字段查非 IP 值不报错
                             }
                         },
                         {

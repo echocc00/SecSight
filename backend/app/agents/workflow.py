@@ -208,7 +208,7 @@ _checkpointer_wf = None
 _checkpointer: object | None = None
 
 
-async def _get_checkpointer():
+async def _get_checkpointer():  # pragma: no cover - 需真实 Postgres
     """获取/初始化 Postgres checkpointer"""
     global _checkpointer
     if _checkpointer is None:
@@ -223,7 +223,7 @@ async def _get_checkpointer():
     return _checkpointer
 
 
-def _build_checkpointer_workflow(checkpointer):
+def _build_checkpointer_workflow(checkpointer):  # pragma: no cover - 需真实 Postgres
     """单一 workflow + interrupt_before(human_approve) 真正中断恢复
 
     与两段式区别: 审批后从 checkpoint 恢复完整状态,而非重建 state。
@@ -256,7 +256,7 @@ def _build_checkpointer_workflow(checkpointer):
     )
 
 
-async def get_checkpointer_workflow():
+async def get_checkpointer_workflow():  # pragma: no cover - 需真实 Postgres
     global _checkpointer_wf
     if _checkpointer_wf is None:
         cp = await _get_checkpointer()
@@ -275,7 +275,7 @@ def route_approval(state: SecSightState) -> str:
     return "execute" if all_approved else "escalate"
 
 
-async def trigger_workflow_checkpointer(case_id: str, playbook_id: str | None) -> None:
+async def trigger_workflow_checkpointer(case_id: str, playbook_id: str | None) -> None:  # pragma: no cover - 需真实 Postgres
     """checkpointer 模式: 跑到 human_approve 前中断,状态持久化"""
     async with async_session() as session:
         repo = CaseRepository(session)
@@ -301,7 +301,7 @@ async def trigger_workflow_checkpointer(case_id: str, playbook_id: str | None) -
     log.info("workflow.triggered_cp", case_id=case_id, playbook_id=playbook_id)
 
 
-async def resume_workflow_checkpointer(case_id: str) -> None:
+async def resume_workflow_checkpointer(case_id: str) -> None:  # pragma: no cover - 需真实 Postgres
     """checkpointer 模式: 从 checkpoint 恢复,继续 execute → update_case"""
     # 同步 DB 的 approval_status 到 state
     async with async_session() as session:

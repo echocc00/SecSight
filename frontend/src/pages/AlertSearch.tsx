@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Card, Input, Table, Tag, Button, Space, Select, message, Empty } from "antd";
+import { Card, Input, Table, Tag, Button, Space, Select, message, Empty, Descriptions } from "antd";
 import { SearchOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -97,6 +97,40 @@ export default function AlertSearch() {
           rowKey={(r) => r.case_id + r.alert.alert_id}
           dataSource={hits}
           pagination={{ pageSize: 20 }}
+          expandable={{
+            expandedRowRender: (r) => (
+              <Descriptions size="small" column={2} bordered>
+                <Descriptions.Item label="Alert ID">{r.alert?.alert_id}</Descriptions.Item>
+                <Descriptions.Item label="时间">
+                  {r.alert?.ts?.slice(0, 19).replace("T", " ") || "—"}
+                </Descriptions.Item>
+                <Descriptions.Item label="目的 IP">{r.alert?.dst_ip || "—"}</Descriptions.Item>
+                <Descriptions.Item label="用户">{r.alert?.user || "—"}</Descriptions.Item>
+                <Descriptions.Item label="主机">{r.alert?.asset?.hostname || "—"}</Descriptions.Item>
+                <Descriptions.Item label="规则级别">{r.alert?.rule_level ?? "—"}</Descriptions.Item>
+                <Descriptions.Item label="MITRE 战术" span={2}>
+                  <Space wrap>
+                    {(r.alert?.mitre_tactics || []).map((t: string) => (
+                      <Tag key={t} color="purple">{t}</Tag>
+                    )) || "—"}
+                  </Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="MITRE 技术" span={2}>
+                  <Space wrap>
+                    {(r.alert?.mitre_techniques || []).map((t: string) => (
+                      <Tag key={t} color="geekblue">{t}</Tag>
+                    )) || "—"}
+                  </Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="原始数据" span={2}>
+                  <pre style={{ margin: 0, fontSize: 11, maxHeight: 200, overflow: "auto" }}>
+                    {JSON.stringify(r.alert?.raw || {}, null, 2)}
+                  </pre>
+                </Descriptions.Item>
+              </Descriptions>
+            ),
+            rowExpandable: () => true,
+          }}
           columns={[
             {
               title: "Case",
