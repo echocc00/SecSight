@@ -68,6 +68,13 @@ APPROVALS_TOTAL = Counter(
     ["decision"],
 )
 
+# 告警时间窗聚合 (并入现有 Case 而非新建)
+ALERTS_DEDUPED_TOTAL = Counter(
+    "secsight_alerts_deduped_total",
+    "Alerts merged into an existing case by time-window aggregation",
+    ["source"],
+)
+
 
 # ============ 便捷记录函数 ============
 
@@ -101,6 +108,10 @@ def record_execution(action_type: str, success: bool) -> None:
 
 def record_approval(decision: str) -> None:
     APPROVALS_TOTAL.labels(decision=decision).inc()
+
+
+def record_alert_deduped(source: str) -> None:
+    ALERTS_DEDUPED_TOTAL.labels(source=source or "unknown").inc()
 
 
 def update_pending(status: str, count: int) -> None:

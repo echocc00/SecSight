@@ -29,6 +29,7 @@ dependencies = [
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.29.0",
     "alembic>=1.13.0",
+    "apscheduler>=3.10.0",  # Proactive Agent 定时调度
     "pgvector>=0.2.5",
 
     # 告警/日志检索 (OpenSearch,经 HTTP API,不 import Wazuh)
@@ -53,6 +54,7 @@ dependencies = [
     "passlib[bcrypt]>=1.7.4",
     "bcrypt==4.0.1",  # 锁定: 4.x + passlib 在 password>72 bytes 时抛 ValueError
     "slowapi>=0.1.9",  # 速率限制
+    "redis>=5.0.0",  # 限流分布式计数器 (RATE_LIMIT_STORAGE_URI=redis://...)
 
     # 工具
     "jinja2>=3.1.0",  # 合规报告模板
@@ -67,6 +69,18 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "httpx>=0.27.0",
+    "aiosqlite>=0.20.0",  # 测试用 SQLite 异步驱动
+    "pip-tools>=7.4.0",  # 生成 requirements*.lock
+]
+# Postgres checkpointer (langgraph 官方 saver,BSD;psycopg LGPL 仅动态链接不传染)
+pg = [
+    "psycopg[binary]>=3.1.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
+]
+# 本地语义 embedding (BGE-m3)。torch+模型约 2GB,默认不装,
+# 只有 EMBEDDING_PROVIDER=bge 才需要。
+embedding = [
+    "sentence-transformers>=3.0.0",
 ]
 
 # ⚠️ License 隔离约束 (见 AGENTS.md):
@@ -77,10 +91,12 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra --strict-markers"
+# 默认跳过 integration/ (需真实 Postgres),CI 单独 job 跑
+addopts = "-ra --strict-markers --ignore=tests/integration"
 markers = [
     "unit: 纯逻辑单元测试 (无 DB/网络)",
     "integration: 需要 DB/API 的集成测试",
+    "pg: 需要真实 Postgres (SECSIGHT_PG_LIVE=1)",
 ]
 
 [tool.coverage.run]

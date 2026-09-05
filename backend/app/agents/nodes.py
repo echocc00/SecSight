@@ -201,8 +201,89 @@ async def analyze_node(state: dict) -> dict:
     return state
 
 
+async def dfir_capture_node(state: dict) -> dict:
+    """节点: DFIR 取证保全 (Containment 前执行,先保证据后处置)
+
+    DFIRAgent 从 enriched_context 收集进程树/内存/网络连接,
+    结果并回 enriched_context 供 Evidence Pack 使用。
+    """
+    from app.agents.roles import AgentContext, DFIRAgent
+
+    case_id = state["case_id"]
+    async with async_session() as session:
+        repo = CaseRepository(session)
+        case = await repo.get(case_id)
+        if not case:
+            return state
+
+        ctx = AgentContext(
+            case=case,
+            retrieved_knowledge=state.get("retrieved_knowledge", []),
+            enriched_context=state.get("enriched_context", {}),
+        )
+        result = await DFIRAgent().run(ctx)
+
+        enriched = dict(state.get("enriched_context") or {})
+        enriched["forensics"] = result["evidence"]
+        state["enriched_context"] = enriched
+        await repo.update_enriched_context(case_id, enriched)
+        await _audit(
+            "dfir_captured",
+            "dfir_agent",
+            case_id,
+            {"forensic_ready": result["forensic_ready"]},
+        )
+
+    log.info("node.dfir_capture", case_id=case_id, ready=result["forensic_ready"])
+    return state
+
+
+async def ir_coordinate_node(state: dict) -> dict:
+    """节点: IR Lead 优先级决策 + 协调指令
+
+    IRLeadAgent 综合 severity/confidence/资产关键度产出 P0-P3 优先级。
+    priority 写入 state,plan_actions 据此调整动作自主性 (P0 强制 L2 双签)。
+    """
+    from app.agents.roles import AgentContext, IRLeadAgent
+
+    case_id = state["case_id"]
+    async with async_session() as session:
+        repo = CaseRepository(session)
+        case = await repo.get(case_id)
+        if not case:
+            return state
+
+        ctx = AgentContext(
+            case=case,
+            retrieved_knowledge=state.get("retrieved_knowledge", []),
+            enriched_context=state.get("enriched_context", {}),
+        )
+        result = await IRLeadAgent().run(ctx)
+
+        state["ir_priority"] = result["priority"]
+        state["ir_coordination"] = result["coordination"]
+        enriched = dict(state.get("enriched_context") or {})
+        enriched["ir_decision"] = result
+        state["enriched_context"] = enriched
+        await repo.update_enriched_context(case_id, enriched)
+        await _audit(
+            "ir_coordinated",
+            "ir_lead_agent",
+            case_id,
+            {"priority": result["priority"], "coordination": result["coordination"]},
+        )
+
+    log.info("node.ir_coordinate", case_id=case_id, priority=result["priority"])
+    return state
+
+
 async def plan_actions_node(state: dict) -> dict:
-    """节点: 从剧本提取 containment_actions → Action 列表"""
+    """节点: 从剧本提取 containment_actions → Action 列表
+
+    IR priority=P0 时高危动作强制降级 L2 双签 (IRLeadAgent 决策真正影响执行)。
+    """
+    from app.approvals.service import CRITICAL_ACTIONS
+
     playbook_id = state.get("current_playbook_id")
     if not playbook_id:
         return state
@@ -212,6 +293,21 @@ async def plan_actions_node(state: dict) -> dict:
         return state
 
     actions = [build_action_from_config(cfg, playbook_id) for cfg in playbook.containment_actions]
+
+    # IR Lead 决策生效: P0 事件的高危动作不允许 L3+ 自动执行
+    priority = state.get("ir_priority")
+    escalated: list[str] = []
+    if priority == "P0":
+        for a in actions:
+            if (
+                a.action_type.value in CRITICAL_ACTIONS
+                and a.autonomy_level != AutonomyLevel.L2
+            ):
+                a.autonomy_level = AutonomyLevel.L2
+                a.approval_required = True
+                a.requires_double_sign = True
+                escalated.append(a.action_type.value)
+
     state["proposed_actions"] = [a.model_dump(mode="json") for a in actions]
 
     async with async_session() as session:
@@ -223,8 +319,21 @@ async def plan_actions_node(state: dict) -> dict:
             if a.approval_required:
                 approval_status[a.action_id] = "pending"
         state["approval_status"] = approval_status
+        if escalated:
+            await _audit(
+                "actions_escalated_to_l2",
+                "ir_lead_agent",
+                state["case_id"],
+                {"priority": priority, "actions": escalated},
+            )
 
-    log.info("node.plan_actions", case_id=state["case_id"], actions=len(actions))
+    log.info(
+        "node.plan_actions",
+        case_id=state["case_id"],
+        actions=len(actions),
+        ir_priority=priority,
+        escalated_to_l2=len(escalated),
+    )
     return state
 
 
@@ -309,7 +418,8 @@ async def escalate_node(state: dict) -> dict:
 
 
 async def update_case_node(state: dict) -> dict:
-    """节点: 生成 Evidence Pack + 关闭 Case + L3 沉淀"""
+    """节点: Compliance/SOCManager 收尾 + Evidence Pack + 关闭 Case + L3 沉淀"""
+    from app.agents.roles import AgentContext, ComplianceAgent, SOCManagerAgent
     from app.core.metrics import record_case_created, record_tttr
 
     case_id = state["case_id"]
@@ -324,11 +434,21 @@ async def update_case_node(state: dict) -> dict:
         tttr = int((datetime.utcnow() - case.created_at).total_seconds())
         record_tttr(tttr)
 
+        # Compliance + SOC Manager 收尾决策
+        agent_ctx = AgentContext(
+            case=case,
+            retrieved_knowledge=state.get("retrieved_knowledge", []),
+            enriched_context=case.enriched_context,
+        )
+        compliance = await ComplianceAgent().run(agent_ctx)
+        escalation = await SOCManagerAgent().run(agent_ctx)
+
         # 构建 Evidence Pack
         evidence_repo = EvidencePackRepository(session)
         pack = {
             "case_id": case_id,
-            "process_tree": case.enriched_context.get("process_tree", {}),
+            "process_tree": case.enriched_context.get("process_tree", {})
+            or case.enriched_context.get("forensics", {}).get("process_tree", {}),
             "timeline": [
                 {
                     "ts": e.started_at.isoformat() if e.started_at else None,
@@ -343,12 +463,60 @@ async def update_case_node(state: dict) -> dict:
                 "tactics": case.alerts[0].mitre_tactics if case.alerts else [],
                 "techniques": case.alerts[0].mitre_techniques if case.alerts else [],
             },
+            # Compliance / SOC Manager 决策留痕 (等保上报 + 升级记录)
+            "compliance": compliance,
+            "escalation": escalation,
+            "ir_decision": case.enriched_context.get("ir_decision", {}),
         }
         pack_id = await evidence_repo.create(pack)
         await repo.set_evidence_pack(case_id, pack_id)
         await repo.close(case_id, tttr)
+
+        # 合规上报要求 (等保2.0 三级: critical/high 24h 内上报)
+        if compliance.get("needs_regulatory_report"):
+            await _audit(
+                "regulatory_report_required",
+                "compliance_agent",
+                case_id,
+                {
+                    "deadline_hours": compliance["deadline_hours"],
+                    "dengbao_level": compliance["dengbao_level"],
+                },
+            )
+        # SOC Manager 升级 (critical → CISO + war room)
+        if escalation.get("escalate_to"):
+            await _audit(
+                "escalated_by_soc_manager",
+                "soc_manager_agent",
+                case_id,
+                {
+                    "escalate_to": escalation["escalate_to"],
+                    "notify": escalation.get("notify", []),
+                    "war_room": escalation.get("war_room", False),
+                    "resources": escalation.get("resource_allocation", {}),
+                },
+            )
+
         await _audit("case_closed", "system", case_id, {"tttr": tttr, "pack_id": pack_id})
         record_case_created("resolved", case.playbook_id or "")
+
+    # 知识沉淀飞轮 (L3 案例 → L1 战术),失败不阻塞 Case 关闭
+    from app.core.config import settings
+
+    if settings.enable_knowledge_sediment:
+        try:
+            from app.knowledge.sediment import sediment_case
+
+            result = await sediment_case(case_id)
+            log.info(
+                "node.sediment_done",
+                case_id=case_id,
+                rules=result.get("rules_generated"),
+                qdrant_points=result.get("qdrant_points"),
+                l1_yaml=result.get("l1_yaml_path"),
+            )
+        except Exception as e:  # noqa: BLE001 - 沉淀失败不阻断闭环
+            log.warning("node.sediment_failed", case_id=case_id, error=str(e))
 
     log.info("node.update_case", case_id=case_id, tttr=tttr)
     return state

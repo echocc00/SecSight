@@ -224,6 +224,7 @@ class Qihu360Provider(ThreatIntelProvider): ...      # 360,付费
 | **裁决** | **采纳 B: MCP 协议** |
 | **理由** | 2026事实标准,已有大量现成安全 MCP server;LangGraph Tool 可封装为 MCP;避免为每个工具定制集成 |
 | **影响** | 保留 B 的 mcp_servers/ 目录;Wazuh/Suricata/osquery/VT/MISP/firewall 各封装 MCP server |
+| **⚠️ 实现推翻** | **2026-09-05 撤销此裁决**。改为 HTTP/REST 直调 (`backend/app/integrations/`)。理由: (1) 现有 httpx 直调已满足需求,MCP 化收益仅"标准化协议",对自用场景无实质价值 (2) 7 个 MCP server = 7 个独立进程 + stdio/SSE 传输,运维成本翻倍 (3) License 隔离已通过 HTTP 网络边界实现,MCP 不增加隔离强度。`mcp_servers/` 目录已删除 |
 
 ### 3.10 数据采集归一化
 
@@ -288,7 +289,7 @@ class Qihu360Provider(ThreatIntelProvider): ...      # 360,付费
 | **22剧本** | 按业务系统分组 + P0/P1/P2 优先级 + Phase1做6个 | YAML 剧本 + autonomy_level 字段 + Shuffle 执行 |
 | **5级自主性** | L1-L5 + 每动作标注 + L2强制双签 | LangGraph interrupt_before 节点 + 飞书/钉钉审批 |
 | **4层知识库** | L0框架/L1战术/L2剧本/L3案例 | L0=MITRE STIX导入;L1=7类业务系统知识;L2=22剧本YAML;L3=案件运行时沉淀(Qdrant向量化) |
-| **MCP工具协议** | mcp_servers/ 目录 | Wazuh/Suricata/osquery/VT/防火墙 各封装 MCP |
+| ~~**MCP工具协议**~~ | ~~mcp_servers/ 目录~~ | **已撤销 (见 §3.9)** — 改为 HTTP/REST 直调 `backend/app/integrations/` |
 | **数据流5层** | L1采集→L2关联→L3剧本→L4智能→L5交互 | 对应 A 的技术栈映射 |
 | **Evidence Pack** | 每案件完整留痕 | LangGraph checkpoint(Postgres) + 审计日志 |
 | **知识反向注入** | L3案例→L1战术优化检测规则 | Detection Engineering Agent(Phase4) |

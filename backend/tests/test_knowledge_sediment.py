@@ -272,3 +272,76 @@ class TestSedimentAPI:
     async def test_sediment_unknown_case_404(self, client):
         r = await client.post("/api/knowledge/no-such-case/sediment")
         assert r.status_code == 404
+
+
+class TestSedimentAutoTriggerInWorkflow:
+    """飞轮闭环: Case resolved 时 update_case_node 自动沉淀"""
+
+    async def _resolve_case(self, client) -> str:
+        r = await client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        case_id = r.json()["data"]["case_id"]
+        pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
+        for action in pending:
+            for role in action.get("required_roles", ["incident_commander", "approver"]):
+                await client.post(
+                    f"/api/approvals/{case_id}/actions/{action['action_id']}/approve",
+                    json={
+                        "approver_role": role,
+                        "approver_user": f"u-{role}",
+                        "decision": "approved",
+                    },
+                )
+        return case_id
+
+    @pytest.mark.asyncio
+    async def test_resolved_case_writes_l1_yaml_automatically(
+        self, client, tmp_path, monkeypatch
+    ):
+        """resolved → 自动生成 L1 YAML (无需手动 POST /sediment)"""
+        import app.knowledge.sediment as sed
+
+        monkeypatch.setattr(sed, "_L1_ROOT", tmp_path / "derived")
+        case_id = await self._resolve_case(client)
+
+        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        assert case["status"] == "resolved"
+        # 沉淀文件按 case_id 前缀命名
+        written = list((tmp_path / "derived").glob("case-*.yaml"))
+        assert written, "resolved 后应自动写 L1 YAML"
+        content = yaml.safe_load(written[0].read_text(encoding="utf-8"))
+        assert content["source_case"] == case_id
+        assert content["auto_generated"] is True
+        assert "T1496" in content["ttps_covered"]
+
+    @pytest.mark.asyncio
+    async def test_sediment_disabled_skips_write(self, client, tmp_path, monkeypatch):
+        """enable_knowledge_sediment=False 时不沉淀"""
+        import app.knowledge.sediment as sed
+        from app.core.config import settings
+
+        monkeypatch.setattr(sed, "_L1_ROOT", tmp_path / "derived")
+        monkeypatch.setattr(settings, "enable_knowledge_sediment", False)
+        case_id = await self._resolve_case(client)
+
+        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        assert case["status"] == "resolved"  # 闭环仍完成
+        assert not (tmp_path / "derived").exists() or not list(
+            (tmp_path / "derived").glob("case-*.yaml")
+        )
+
+    @pytest.mark.asyncio
+    async def test_sediment_failure_does_not_block_resolve(
+        self, client, monkeypatch
+    ):
+        """沉淀异常时 Case 仍能 resolved (失败不阻塞闭环)"""
+        import app.agents.nodes as nodes_mod
+
+        async def _boom(case_id: str):
+            raise RuntimeError("sediment exploded")
+
+        monkeypatch.setattr(
+            "app.knowledge.sediment.sediment_case", _boom, raising=True
+        )
+        case_id = await self._resolve_case(client)
+        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        assert case["status"] == "resolved"

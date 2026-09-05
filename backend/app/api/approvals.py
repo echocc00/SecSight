@@ -1,19 +1,22 @@
 """审批 API"""
-from __future__ import annotations
-
-from fastapi import APIRouter, Depends, HTTPException
+# 注意: 本模块不用 `from __future__ import annotations` —— slowapi 的 @limiter.limit
+# 包装器丢失原函数 __globals__,字符串注解无法解析,FastAPI 会把 body 参数误判成 query。
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.workflow import resume_workflow
 from app.api.schemas import ApiResponse, ApprovalRequest
 from app.approvals.service import ApprovalError, approval_service
+from app.core.security import APPROVAL_LIMIT, WEBHOOK_LIMIT, limiter
 from app.db.database import get_session
 
 router = APIRouter()
 
 
 @router.post("/{case_id}/actions/{action_id}/approve", response_model=ApiResponse)
+@limiter.limit(APPROVAL_LIMIT)
 async def approve_action(
+    request: Request,
     case_id: str,
     action_id: str,
     req: ApprovalRequest,
@@ -102,8 +105,11 @@ async def list_approval_records(
 
 
 @router.post("/callback/feishu", response_model=ApiResponse)
+@limiter.limit(WEBHOOK_LIMIT)
 async def feishu_callback(
-    payload: dict, session: AsyncSession = Depends(get_session)
+    request: Request,
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """飞书审批按钮回调
 
@@ -137,7 +143,9 @@ async def feishu_callback(
 
 
 @router.get("/callback/dingtalk", response_model=ApiResponse)
+@limiter.limit(WEBHOOK_LIMIT)
 async def dingtalk_callback(
+    request: Request,
     case_id: str,
     action_id: str,
     decision: str,

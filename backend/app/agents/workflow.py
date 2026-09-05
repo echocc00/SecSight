@@ -15,11 +15,13 @@ from langgraph.graph import END, StateGraph
 
 from app.agents.nodes import (
     analyze_node,
+    dfir_capture_node,
     enrich_ioc_node,
     escalate_node,
     execute_node,
     human_approve_node,
     ingest_alerts_node,
+    ir_coordinate_node,
     plan_actions_node,
     retrieve_knowledge_node,
     update_case_node,
@@ -63,7 +65,15 @@ def route_after_plan(state: SecSightState) -> str:
 
 
 def build_trigger_workflow():
-    """ingest → retrieve → analyze → plan → [路由]
+    """ingest → retrieve → enrich → analyze → dfir → ir_lead → plan → [路由]
+
+    Agent 映射:
+      ingest_alerts     TriageAgent (剧本匹配 + 定级)
+      retrieve/analyze  InvestigationAgent (RAG + LLM 研判)
+      dfir_capture      DFIRAgent (取证保全,Containment 前)
+      ir_coordinate     IRLeadAgent (优先级决策,P0 强制 L2 双签)
+      plan_actions      ContainmentAgent (剧本动作提取)
+      update_case       ComplianceAgent + SOCManagerAgent (上报 + 升级)
 
     有 L2 → human_approve(标记pending) → END (等外部审批,走 resume)
     无 L2 → execute → update_case → END (自动闭环)
@@ -73,6 +83,8 @@ def build_trigger_workflow():
     wf.add_node("retrieve_knowledge", retrieve_knowledge_node)
     wf.add_node("enrich_ioc", enrich_ioc_node)
     wf.add_node("analyze", analyze_node)
+    wf.add_node("dfir_capture", dfir_capture_node)
+    wf.add_node("ir_coordinate", ir_coordinate_node)
     wf.add_node("plan_actions", plan_actions_node)
     wf.add_node("human_approve", human_approve_node)
     wf.add_node("execute", execute_node)
@@ -82,7 +94,9 @@ def build_trigger_workflow():
     wf.add_edge("ingest_alerts", "retrieve_knowledge")
     wf.add_edge("retrieve_knowledge", "enrich_ioc")
     wf.add_edge("enrich_ioc", "analyze")
-    wf.add_edge("analyze", "plan_actions")
+    wf.add_edge("analyze", "dfir_capture")
+    wf.add_edge("dfir_capture", "ir_coordinate")
+    wf.add_edge("ir_coordinate", "plan_actions")
     wf.add_conditional_edges("plan_actions", route_after_plan)
     wf.add_edge("human_approve", END)  # L2 路径: 暂停等审批
     wf.add_edge("execute", "update_case")  # 无 L2 路径: 自动执行
@@ -206,33 +220,56 @@ def _is_checkpointer_enabled() -> bool:
 
 _checkpointer_wf = None
 _checkpointer: object | None = None
+_checkpointer_cm: object | None = None
 
 
-async def _get_checkpointer():  # pragma: no cover - 需真实 Postgres
-    """获取/初始化 Postgres checkpointer"""
-    global _checkpointer
+async def _get_checkpointer():
+    """获取/初始化 Postgres checkpointer
+
+    AsyncPostgresSaver.from_conn_string 返回 async context manager,
+    需 __aenter__ 拿到真实 saver 实例。进程级单例 (连接池复用)。
+    """
+    global _checkpointer, _checkpointer_cm
     if _checkpointer is None:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
         from app.core.config import settings
 
-        # 用同步 psycopg 连接字符串 (去掉 +asyncpg)
-        sync_dsn = settings.database_url.replace("+asyncpg", "")
-        _checkpointer = AsyncPostgresSaver.from_conn_string(sync_dsn)
-        await _checkpointer.setup()  # 建检查点表
+        # langgraph checkpointer 用 psycopg (同步 driver 名),去掉 +asyncpg
+        dsn = settings.database_url.replace("+asyncpg", "")
+        _checkpointer_cm = AsyncPostgresSaver.from_conn_string(dsn)
+        _checkpointer = await _checkpointer_cm.__aenter__()
+        await _checkpointer.setup()  # 建 checkpoints/checkpoint_writes 表
     return _checkpointer
 
 
-def _build_checkpointer_workflow(checkpointer):  # pragma: no cover - 需真实 Postgres
+async def close_checkpointer() -> None:
+    """关闭 checkpointer 连接 (lifespan shutdown 调用)"""
+    global _checkpointer, _checkpointer_cm, _checkpointer_wf
+    if _checkpointer_cm is not None:
+        try:
+            await _checkpointer_cm.__aexit__(None, None, None)
+        except Exception as e:  # noqa: BLE001
+            log.warning("checkpointer.close_failed", error=str(e))
+    _checkpointer = None
+    _checkpointer_cm = None
+    _checkpointer_wf = None
+
+
+def _build_checkpointer_workflow(checkpointer):
     """单一 workflow + interrupt_before(human_approve) 真正中断恢复
 
     与两段式区别: 审批后从 checkpoint 恢复完整状态,而非重建 state。
+    节点拓扑与 build_trigger_workflow 一致 (含 dfir/ir_coordinate),
+    额外加 escalate 分支 (审批拒绝路径)。
     """
     wf = StateGraph(SecSightState)
     wf.add_node("ingest_alerts", ingest_alerts_node)
     wf.add_node("retrieve_knowledge", retrieve_knowledge_node)
     wf.add_node("enrich_ioc", enrich_ioc_node)
     wf.add_node("analyze", analyze_node)
+    wf.add_node("dfir_capture", dfir_capture_node)
+    wf.add_node("ir_coordinate", ir_coordinate_node)
     wf.add_node("plan_actions", plan_actions_node)
     wf.add_node("human_approve", human_approve_node)
     wf.add_node("execute", execute_node)
@@ -243,7 +280,9 @@ def _build_checkpointer_workflow(checkpointer):  # pragma: no cover - 需真实 
     wf.add_edge("ingest_alerts", "retrieve_knowledge")
     wf.add_edge("retrieve_knowledge", "enrich_ioc")
     wf.add_edge("enrich_ioc", "analyze")
-    wf.add_edge("analyze", "plan_actions")
+    wf.add_edge("analyze", "dfir_capture")
+    wf.add_edge("dfir_capture", "ir_coordinate")
+    wf.add_edge("ir_coordinate", "plan_actions")
     wf.add_conditional_edges("plan_actions", route_after_plan)
     wf.add_conditional_edges("human_approve", route_approval)
     wf.add_edge("execute", "update_case")
@@ -256,7 +295,7 @@ def _build_checkpointer_workflow(checkpointer):  # pragma: no cover - 需真实 
     )
 
 
-async def get_checkpointer_workflow():  # pragma: no cover - 需真实 Postgres
+async def get_checkpointer_workflow():
     global _checkpointer_wf
     if _checkpointer_wf is None:
         cp = await _get_checkpointer()
@@ -275,7 +314,7 @@ def route_approval(state: SecSightState) -> str:
     return "execute" if all_approved else "escalate"
 
 
-async def trigger_workflow_checkpointer(case_id: str, playbook_id: str | None) -> None:  # pragma: no cover - 需真实 Postgres
+async def trigger_workflow_checkpointer(case_id: str, playbook_id: str | None) -> None:
     """checkpointer 模式: 跑到 human_approve 前中断,状态持久化"""
     async with async_session() as session:
         repo = CaseRepository(session)
@@ -301,7 +340,7 @@ async def trigger_workflow_checkpointer(case_id: str, playbook_id: str | None) -
     log.info("workflow.triggered_cp", case_id=case_id, playbook_id=playbook_id)
 
 
-async def resume_workflow_checkpointer(case_id: str) -> None:  # pragma: no cover - 需真实 Postgres
+async def resume_workflow_checkpointer(case_id: str) -> None:
     """checkpointer 模式: 从 checkpoint 恢复,继续 execute → update_case"""
     # 同步 DB 的 approval_status 到 state
     async with async_session() as session:

@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.retrieval.embedding import EmbeddingProvider, embedding_provider
+from app.retrieval.embedding import TFIDFEmbedding, embedding_provider
 from app.retrieval.mock import KnowledgeRetriever, MockRetriever, get_retriever
 
 
 class TestEmbeddingProvider:
     def test_embed_returns_fixed_dim(self):
         vec = embedding_provider.embed("xmrig mining")
-        assert len(vec) == EmbeddingProvider.dim
+        assert len(vec) == TFIDFEmbedding.dim
 
     def test_embed_normalizes_l2(self):
         vec = embedding_provider.embed("cryptominer stratum pool")
@@ -36,7 +36,7 @@ class TestEmbeddingProvider:
     def test_embed_batch(self):
         vecs = embedding_provider.embed_batch(["a", "b"])
         assert len(vecs) == 2
-        assert all(len(v) == EmbeddingProvider.dim for v in vecs)
+        assert all(len(v) == TFIDFEmbedding.dim for v in vecs)
 
 
 class TestGetRetrieverFactory:

@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     qdrant_url: str = Field(default="http://qdrant:6333", alias="QDRANT_URL")
     qdrant_api_key: str = Field(default="", alias="QDRANT_API_KEY")
 
+    # Embedding provider: tfidf (无依赖兜底) | bge (本地 sentence-transformers) | api (OpenAI 兼容)
+    # 换 provider 会改向量维度 → 必须重建 Qdrant collection (deploy/reindex.py)
+    embedding_provider: str = Field(default="tfidf", alias="EMBEDDING_PROVIDER")
+    embedding_model: str = Field(default="BAAI/bge-m3", alias="EMBEDDING_MODEL")
+    embedding_device: str = Field(default="cpu", alias="EMBEDDING_DEVICE")
+    embedding_api_base: str = Field(default="", alias="EMBEDDING_API_BASE")
+    embedding_api_key: str = Field(default="", alias="EMBEDDING_API_KEY")
+    # 真实 embedding 失败是否降级 tfidf。生产建议 false —— 静默降级会让
+    # 检索质量断崖下跌却无人察觉,且维度不匹配时写入的向量是垃圾。
+    embedding_fallback_to_tfidf: bool = Field(
+        default=True, alias="EMBEDDING_FALLBACK_TO_TFIDF"
+    )
+
     # LLM 网关 (LiteLLM)
     litellm_base_url: str = Field(
         default="http://litellm:4000/v1", alias="LITELLM_BASE_URL"
@@ -66,6 +79,31 @@ class Settings(BaseSettings):
     enable_shuffle: bool = Field(default=False, alias="ENABLE_SHUFFLE")
     enable_opensearch: bool = Field(default=False, alias="ENABLE_OPENSEARCH")
     enable_checkpointer: bool = Field(default=False, alias="ENABLE_CHECKPOINTER")
+    # 知识沉淀飞轮 (L3→L1): Case resolved 后自动提取知识 + 入 Qdrant + 写 L1 YAML
+    enable_knowledge_sediment: bool = Field(
+        default=True, alias="ENABLE_KNOWLEDGE_SEDIMENT"
+    )
+    # Proactive Agent 定时调度 (威胁狩猎/漏扫/检测工程/资产加固)
+    enable_proactive_scheduler: bool = Field(
+        default=False, alias="ENABLE_PROACTIVE_SCHEDULER"
+    )
+    # 告警时间窗聚合 (同 IoC 窗口内并入现有 Case,防告警风暴)
+    enable_alert_dedup: bool = Field(default=True, alias="ENABLE_ALERT_DEDUP")
+    alert_dedup_window_minutes: int = Field(
+        default=5, alias="ALERT_DEDUP_WINDOW_MINUTES"
+    )
+
+    # 速率限制 (多副本部署必须用 Redis,否则每副本独立计数)
+    rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
+    rate_limit_storage_uri: str = Field(
+        default="memory://", alias="RATE_LIMIT_STORAGE_URI"
+    )
+    rate_limit_login: str = Field(default="5/minute", alias="RATE_LIMIT_LOGIN")
+    rate_limit_inject: str = Field(default="30/minute", alias="RATE_LIMIT_INJECT")
+    rate_limit_webhook: str = Field(default="600/minute", alias="RATE_LIMIT_WEBHOOK")
+    rate_limit_search: str = Field(default="60/minute", alias="RATE_LIMIT_SEARCH")
+    rate_limit_approval: str = Field(default="120/minute", alias="RATE_LIMIT_APPROVAL")
+    rate_limit_default: str = Field(default="1000/minute", alias="RATE_LIMIT_DEFAULT")
     # 情报源: mock_mode=False 且 enable_threat_intel=True 时用真实 AbuseIPDB+OTX
     enable_threat_intel: bool = Field(default=False, alias="ENABLE_THREAT_INTEL")
     abuseipdb_api_key: str = Field(default="", alias="ABUSEIPDB_API_KEY")
@@ -101,6 +139,11 @@ class Settings(BaseSettings):
         default="http://opencti:8080", alias="OPENCTI_BASE_URL"
     )
     opencti_token: str = Field(default="", alias="OPENCTI_ADMIN_TOKEN")
+    # OpenCTI 作为第 3 情报源 (本地 STIX 知识库 + APT 归因)
+    enable_opencti: bool = Field(default=False, alias="ENABLE_OPENCTI")
+    opencti_timeout_seconds: int = Field(default=15, alias="OPENCTI_TIMEOUT_SECONDS")
+    # x_opencti_score 阈值: >= 判恶意。OpenCTI 默认 50,情报质量高的库可调低
+    opencti_malicious_score: int = Field(default=50, alias="OPENCTI_MALICIOUS_SCORE")
     iris_base_url: str = Field(default="http://dfir-iris:8000", alias="IRIS_BASE_URL")
 
     # 威胁情报 (免费源)
@@ -111,6 +154,19 @@ class Settings(BaseSettings):
     audit_log_retention_days: int = Field(
         default=180, alias="AUDIT_LOG_RETENTION_DAYS"
     )
+
+    # 认证令牌
+    # access 短时效 + refresh 长时效: access 泄露的窗口从 8h 收到 30min,
+    # refresh 存 hash 且可吊销,登出即失效。
+    access_token_expire_minutes: int = Field(
+        default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES"
+    )
+    refresh_token_expire_days: int = Field(
+        default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS"
+    )
+    # 种子用户初始密码。生产留空 → 启动时生成随机密码并打印一次,
+    # 避免所有部署共用 ChangeMe_123!
+    seed_user_password: str = Field(default="", alias="SEED_USER_PASSWORD")
 
 
 @lru_cache

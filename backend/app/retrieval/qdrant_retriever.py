@@ -19,7 +19,7 @@ import structlog
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models as qm
 
-from app.retrieval.embedding import embedding_provider
+from app.retrieval.embedding import get_embedding_provider
 from app.retrieval.mock import KnowledgeRetriever
 
 log = structlog.get_logger()
@@ -27,23 +27,39 @@ log = structlog.get_logger()
 COLLECTION = "secsight_knowledge"
 
 
+def collection_name(dim: int) -> str:
+    """维度写进 collection 名
+
+    换 embedding provider 会改维度,复用同名 collection 会让 Qdrant 拒写
+    或让旧向量与新查询向量落在不同语义空间 (静默返回垃圾结果)。
+    """
+    return f"{COLLECTION}_{dim}"
+
+
 class QdrantRetriever(KnowledgeRetriever):
     """真实 Qdrant 向量检索"""
 
-    def __init__(self, url: str, api_key: str = "", dim: int = embedding_provider.dim) -> None:
+    def __init__(self, url: str, api_key: str = "", dim: int | None = None) -> None:
         self.client = AsyncQdrantClient(url=url, api_key=api_key or None)
-        self.dim = dim
+        self.embedder = get_embedding_provider()
+        self.dim = dim or self.embedder.dim
+        self.collection = collection_name(self.dim)
 
     async def ensure_collection(self) -> None:
         """确保 collection 存在 (幂等)"""
         collections = await self.client.get_collections()
         names = {c.name for c in collections.collections}
-        if COLLECTION not in names:
+        if self.collection not in names:
             await self.client.create_collection(
-                collection_name=COLLECTION,
+                collection_name=self.collection,
                 vectors_config=qm.VectorParams(size=self.dim, distance=qm.Distance.COSINE),
             )
-            log.info("qdrant.collection_created", collection=COLLECTION, dim=self.dim)
+            log.info(
+                "qdrant.collection_created",
+                collection=self.collection,
+                dim=self.dim,
+                embedding=self.embedder.name,
+            )
 
     async def search(self, query: str | list[dict], top_k: int = 5) -> list[dict]:
         """向量检索 top_k chunks"""
@@ -52,13 +68,13 @@ class QdrantRetriever(KnowledgeRetriever):
             if isinstance(query, str)
             else " ".join(str(m.get("content", "")) for m in query)
         )
-        vector = embedding_provider.embed(query_text)
+        vector = self.embedder.embed(query_text)
 
         try:
             await self.ensure_collection()
             # qdrant-client 新版用 query_points (search 已弃用)
             response = await self.client.query_points(
-                collection_name=COLLECTION,
+                collection_name=self.collection,
                 query=vector,
                 limit=top_k,
                 with_payload=True,
@@ -82,17 +98,22 @@ class QdrantRetriever(KnowledgeRetriever):
         items: [{"id":..., "name":..., "description":..., "type":..., ...}]
         """
         await self.ensure_collection()
+        texts = [
+            " ".join(str(v) for v in item.values() if isinstance(v, (str, list)))
+            for item in items
+        ]
+        # 批量编码: BGE 一次前向传播处理整批,逐条会慢一个量级
+        vectors = self.embedder.embed_batch(texts)
+
         points: list[qm.PointStruct] = []
-        for item in items:
-            text = " ".join(str(v) for v in item.values() if isinstance(v, (str, list)))
-            vec = embedding_provider.embed(text)
+        for item, text, vec in zip(items, texts, vectors):
             point_id = item.get("id") or text[:32]
             # 用确定性 UUID5 (基于 id 字符串),避免 hash 碰撞导致重复
             pid = str(uuid.uuid5(uuid.NAMESPACE_URL, str(point_id)))
             points.append(qm.PointStruct(id=pid, vector=vec, payload=item))
 
-        await self.client.upsert(collection_name=COLLECTION, points=points)
-        log.info("qdrant.ingested", count=len(points))
+        await self.client.upsert(collection_name=self.collection, points=points)
+        log.info("qdrant.ingested", count=len(points), collection=self.collection)
         return len(points)
 
 

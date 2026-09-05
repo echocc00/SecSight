@@ -15,17 +15,27 @@
 ## 第 1 步:克隆 & 装环境
 
 ```bash
-git clone https://github.com/echocc00/REPO.git
-cd REPO
+git clone https://github.com/echocc00/SecSight.git
+cd SecSight/backend
 
 # 创建虚拟环境
 python3 -m venv .venv
 source .venv/bin/activate    # macOS / Linux
 # .venv\Scripts\activate     # Windows
 
-# 装依赖(开发模式)
-pip install -e ".[dev]"
+# 装依赖 (lock 精确版本,与 CI/镜像一致)
+pip install -r requirements-dev.lock
+pip install --no-deps -e .
 ```
+
+> 改了 `pyproject.toml` 的依赖后必须重新生成 lock,否则 CI 的
+> `dependency-lock-check` 会失败:
+>
+> ```bash
+> pip-compile --strip-extras --output-file=requirements.lock pyproject.toml
+> pip-compile --strip-extras --extra dev --output-file=requirements-dev.lock pyproject.toml
+> pip-compile --strip-extras --extra pg --output-file=requirements-pg.lock pyproject.toml
+> ```
 
 ## 第 2 步:启动依赖服务(Docker)
 
@@ -96,7 +106,7 @@ A: 检查 `docker compose ps` 确认 PostgreSQL 已启动;`.env` 里的 `DATABAS
 A: `.env` 里的 `LLM_API_KEY` 没填或填错。本项目**不内置 LLM**,需要你自己申请(DeepSeek/Qwen/MiniMax/OpenAI 都支持)。
 
 **Q: 跑测试有 fixture 错误?**
-A: 通常是依赖没装全:`pip install -e ".[dev]"` 重新装一遍。
+A: 通常是依赖没装全:`pip install -r requirements-dev.lock` 重新装一遍。
 
 ---
 

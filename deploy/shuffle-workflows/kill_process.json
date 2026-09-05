@@ -1,0 +1,40 @@
+{
+  "name": "SecSight - Kill Process",
+  "description": "终止进程 — SecSight 契约: execution_argument.target = {hostname, pid, process_name}。",
+  "triggers": [
+    { "name": "SecSight Webhook", "trigger_type": "WEBHOOK", "status": "running" }
+  ],
+  "actions": [
+    {
+      "name": "parse_target",
+      "app_name": "Shuffle Tools",
+      "app_version": "1.2.0",
+      "action_name": "execute_python",
+      "parameters": [
+        {
+          "name": "code",
+          "value": "import json\npayload = json.loads($exec)\nt = payload.get('target', {})\nreturn {'hostname': t.get('hostname'), 'pid': t.get('pid'), 'process_name': t.get('process_name'), 'case_id': payload.get('case_id')}"
+        }
+      ]
+    },
+    {
+      "name": "kill_via_wazuh_ar",
+      "app_name": "REPLACE_WITH_WAZUH_OR_OSQUERY_APP",
+      "action_name": "run_active_response",
+      "_comment": "Wazuh: PUT /active-response {command: 'kill-process', arguments: [pid]} | 或 osquery + SSH",
+      "parameters": [
+        { "name": "agent_hostname", "value": "$parse_target.hostname" },
+        { "name": "command", "value": "kill-process" },
+        { "name": "arguments", "value": "$parse_target.pid" }
+      ]
+    }
+  ],
+  "_secsight_contract": {
+    "action_type": "kill_process",
+    "expected_target_fields": ["hostname", "pid", "process_name"],
+    "response_must_contain": "execution_id",
+    "autonomy_level": "L2",
+    "risk": "high",
+    "note": "无回滚 — 进程已终止无法恢复,依赖 DFIR 取证在此动作前完成"
+  }
+}

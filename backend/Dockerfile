@@ -7,11 +7,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libpq-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Python 依赖 + 应用代码 (editable 安装需源码在场)
+# 依赖用 lock 精确固定 (pip-compile 生成),再 --no-deps 安装本包。
+# 分两步既让依赖层可缓存,也避免构建时解析器重新选版本 —— 镜像内容与
+# CI 扫出的 SBOM 才能对得上。
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
+
 COPY pyproject.toml ./
 COPY app/ ./app/
-RUN pip install --no-cache-dir uv && \
-    uv pip install --system -e ".[dev]" || pip install --no-cache-dir -e ".[dev]"
+RUN pip install --no-cache-dir --no-deps -e .
 
 EXPOSE 8000
 

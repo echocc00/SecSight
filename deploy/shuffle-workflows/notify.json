@@ -1,0 +1,39 @@
+{
+  "name": "SecSight - Notify",
+  "description": "通知 — SecSight 契约: execution_argument.target = {channel, message}。L4 自主 (无需审批)。",
+  "triggers": [
+    { "name": "SecSight Webhook", "trigger_type": "WEBHOOK", "status": "running" }
+  ],
+  "actions": [
+    {
+      "name": "parse_target",
+      "app_name": "Shuffle Tools",
+      "app_version": "1.2.0",
+      "action_name": "execute_python",
+      "parameters": [
+        {
+          "name": "code",
+          "value": "import json\npayload = json.loads($exec)\nt = payload.get('target', {})\nreturn {'channel': t.get('channel', 'default'), 'message': t.get('message', ''), 'case_id': payload.get('case_id')}"
+        }
+      ]
+    },
+    {
+      "name": "send_notification",
+      "app_name": "REPLACE_WITH_FEISHU_OR_DINGTALK_APP",
+      "action_name": "send_message",
+      "_comment": "飞书: POST webhook | 钉钉: POST webhook + 加签 | 或 SMTP",
+      "parameters": [
+        { "name": "channel", "value": "$parse_target.channel" },
+        { "name": "text", "value": "[SecSight] $parse_target.message (case: $parse_target.case_id)" }
+      ]
+    }
+  ],
+  "_secsight_contract": {
+    "action_type": "notify",
+    "expected_target_fields": ["channel", "message"],
+    "response_must_contain": "execution_id",
+    "autonomy_level": "L4 (自动执行,异步审计)",
+    "risk": "low",
+    "note": "SecSight 已内置飞书/钉钉直连 (app/integrations/notify.py),此 Workflow 为统一走 SOAR 的可选路径"
+  }
+}

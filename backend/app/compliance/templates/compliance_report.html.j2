@@ -116,15 +116,30 @@ pre { background: #f6f8fa; padding: 12px; overflow-x: auto; font-size: 12px; }
 
 <h2>七、合规留痕</h2>
 <table>
-<tr><th>时间</th><th>动作</th><th>操作人</th></tr>
+<tr><th>序号</th><th>时间</th><th>动作</th><th>操作人</th><th>记录哈希</th></tr>
 {% for log in audit_logs %}
 <tr>
+<td>{{ log.seq if log.seq else "—" }}</td>
 <td>{{ log.ts[:19] if log.ts else "—" }}</td>
 <td>{{ log.action }}</td>
 <td>{{ log.actor }}</td>
+<td><code>{{ log.entry_hash[:16] if log.entry_hash else "—" }}</code></td>
 </tr>
 {% endfor %}
 </table>
+
+<h3>审计链完整性校验</h3>
+{% if audit_chain %}
+{% if audit_chain.valid %}
+<p>✅ 审计日志 hash chain 校验通过,共 {{ audit_chain.verified_count }} 条记录未被篡改。</p>
+<p>链头哈希: <code>{{ audit_chain.chain_head }}</code></p>
+{% else %}
+<p>⚠️ 审计链校验失败,断点位于序号 {{ audit_chain.broken_at_seq }}: {{ audit_chain.reason }}</p>
+<p>已验证记录数: {{ audit_chain.verified_count }}</p>
+{% endif %}
+{% else %}
+<p>未执行审计链校验。</p>
+{% endif %}
 
 <h2>八、整改建议</h2>
 <ul>

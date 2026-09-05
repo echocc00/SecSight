@@ -45,7 +45,7 @@
 | 漏洞/攻击面 | Nuclei + Trivy + KubeHound + Nmap |
 | AI 核心 | LangGraph + LiteLLM 网关 + 云端 LLM(DeepSeek/MiniMax) + Qdrant |
 | 案件管理 | DFIR-IRIS (LGPL-3.0) |
-| 工具协议 | MCP |
+| 工具协议 | HTTP/REST 直调 (License 隔离通过网络边界) |
 | 后端/前端 | FastAPI + Vite/React/Antd |
 
 ## 核心特性

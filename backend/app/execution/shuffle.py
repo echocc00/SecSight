@@ -7,19 +7,25 @@ Shuffle Workflow 触发:
   Body: {"execution_argument": JSON.stringify(action)}
   Headers: Authorization: Bearer {api_key}
 
-Workflow ID 映射: action_type → shuffle_workflow_id (配置在 SHUFFLE_WORKFLOW_MAP)
-用户需在 Shuffle UI 创建对应 Workflow,把 ID 填入配置。
+Workflow ID 配置 (两种方式,环境变量优先):
+  1. 单动作环境变量: SHUFFLE_WORKFLOW_ISOLATE_HOST=abc-123
+  2. JSON 映射:      SHUFFLE_WORKFLOW_MAP={"isolate_host":"abc-123",...}
+
+未配置的动作会抛 ShuffleError → get_executor 降级 MockExecutor,
+启动时 validate_execution_config() 会显式警告哪些动作走 mock。
+Workflow 模板见 deploy/shuffle-workflows/。
 """
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import httpx
 import structlog
 
 from app.execution.mock import ActionExecutor
-from app.models.schemas import Action
+from app.models.schemas import Action, ActionType
 
 log = structlog.get_logger()
 
@@ -29,17 +35,35 @@ class ShuffleError(Exception):
     pass
 
 
-# 默认 action_type → workflow_id 映射 (用户在 Shuffle UI 创建后填入)
-_DEFAULT_WORKFLOW_MAP: dict[str, str] = {
-    "isolate_host": "",
-    "block_ip": "",
-    "block_domain": "",
-    "kill_process": "",
-    "quarantine_file": "",
-    "freeze_account": "",
-    "notify": "",
-    "service_restart": "",
-}
+def load_workflow_map() -> dict[str, str]:
+    """加载 action_type → workflow_id 映射
+
+    优先级: 单动作环境变量 > SHUFFLE_WORKFLOW_MAP JSON > 空
+    环境变量命名: SHUFFLE_WORKFLOW_<ACTION_TYPE_UPPER>
+      例: SHUFFLE_WORKFLOW_ISOLATE_HOST=abc-123-def
+    """
+    from app.core.config import settings
+
+    result: dict[str, str] = {}
+
+    # 1. JSON 映射 (批量配置)
+    raw = (settings.shuffle_workflow_map or "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                result.update({k: str(v) for k, v in parsed.items() if v})
+        except json.JSONDecodeError as e:
+            log.warning("shuffle.workflow_map_invalid_json", error=str(e))
+
+    # 2. 单动作环境变量 (覆盖 JSON)
+    for action in ActionType:
+        env_key = f"SHUFFLE_WORKFLOW_{action.value.upper()}"
+        wf_id = os.environ.get(env_key, "").strip()
+        if wf_id:
+            result[action.value] = wf_id
+
+    return result
 
 
 class ShuffleExecutor(ActionExecutor):
@@ -56,7 +80,7 @@ class ShuffleExecutor(ActionExecutor):
             raise ShuffleError("Shuffle base_url 未配置")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
-        self.workflow_map = workflow_map or _DEFAULT_WORKFLOW_MAP
+        self.workflow_map = workflow_map if workflow_map is not None else load_workflow_map()
         self.timeout = timeout
 
     async def execute(self, action: Action, case_id: str | None = None) -> dict:
@@ -66,8 +90,9 @@ class ShuffleExecutor(ActionExecutor):
 
         if not workflow_id:
             raise ShuffleError(
-                f"action_type '{action_type}' 未配置 Shuffle workflow_id "
-                f"(在 Shuffle UI 创建 Workflow 后填入 SHUFFLE_WORKFLOW_MAP)"
+                f"action_type '{action_type}' 未配置 Shuffle workflow_id。"
+                f"设 SHUFFLE_WORKFLOW_{action_type.upper()}=<workflow_id> "
+                f"(Workflow 模板见 deploy/shuffle-workflows/)"
             )
 
         payload = {

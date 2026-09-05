@@ -119,9 +119,12 @@ services:
       QDRANT_URL: http://qdrant:6333
       LITELLM_BASE_URL: http://litellm:4000/v1
       PLAYBOOKS_DIR: /app/playbooks
+      # 限流用 Redis 共享计数器: 多副本时每副本独立内存计数会把实际配额放大 N 倍
+      RATE_LIMIT_STORAGE_URI: ${RATE_LIMIT_STORAGE_URI:-redis://redis:6379/1}
     depends_on:
       postgres: { condition: service_healthy }
       qdrant: { condition: service_healthy }
+      redis: { condition: service_healthy }
     networks: [secsight-net, isolation-net, infra-net]
     ports: ["8000:8000"]
     volumes:

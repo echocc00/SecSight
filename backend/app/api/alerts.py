@@ -1,12 +1,14 @@
 """告警 API + mock 注入"""
-from __future__ import annotations
-
-from fastapi import APIRouter, Depends
+# 注意: 本模块不用 `from __future__ import annotations` —— slowapi 的 @limiter.limit
+# 包装器丢失原函数 __globals__,字符串注解无法解析,FastAPI 会把 body 参数误判成 query。
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.workflow import trigger_workflow
 from app.api.schemas import AlertInjectRequest, ApiResponse
+from app.core.security import INJECT_LIMIT, SEARCH_LIMIT, WEBHOOK_LIMIT, limiter
 from app.db.database import get_session
+from app.db.models import CaseModel
 from app.db.repositories import CaseRepository
 from app.mock.alerts import MOCK_ALERTS
 from app.models.schemas import CaseStatus
@@ -15,9 +17,58 @@ from app.playbooks.engine import engine as playbook_engine
 router = APIRouter()
 
 
+async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
+    """告警统一入口: 时间窗聚合 → 剧本匹配 → 触发编排
+
+    聚合命中时跳过编排触发,因为该 Case 已有 workflow 在跑 (可能正卡在
+    human_approve),重复触发会生成重复处置动作。
+    """
+    repo = CaseRepository(session)
+    case, deduped = await repo.ingest_alert(alert)
+
+    if deduped:
+        from app.core.metrics import record_alert_deduped
+
+        record_alert_deduped(alert.source)
+        model = await session.get(CaseModel, case.case_id)
+        return {
+            "case_id": case.case_id,
+            "playbook_id": model.playbook_id if model else None,
+            "alert_id": alert.alert_id,
+            "severity": alert.severity.value,
+            "deduped": True,
+            "alert_count": model.alert_count if model else len(case.alerts),
+        }
+
+    playbook = playbook_engine.match(alert)
+    playbook_id = None
+    if playbook:
+        playbook_id = playbook.id
+        await repo.update_status(case.case_id, CaseStatus.investigating)
+        model = await session.get(CaseModel, case.case_id)
+        if model:
+            model.playbook_id = playbook.id
+            await session.commit()
+
+    await trigger_workflow(case.case_id, playbook_id)
+
+    return {
+        "case_id": case.case_id,
+        "playbook_id": playbook_id,
+        "playbook_name": playbook.name if playbook else None,
+        "alert_id": alert.alert_id,
+        "severity": alert.severity.value,
+        "deduped": False,
+        "alert_count": 1,
+    }
+
+
 @router.post("/inject", response_model=ApiResponse)
+@limiter.limit(INJECT_LIMIT)
 async def inject_alert(
-    req: AlertInjectRequest, session: AsyncSession = Depends(get_session)
+    request: Request,
+    req: AlertInjectRequest,
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """注入 mock 告警 → 自动建 Case + 匹配剧本 + 触发编排
 
@@ -34,38 +85,12 @@ async def inject_alert(
         pid=req.pid or 28371,
     )
 
-    repo = CaseRepository(session)
-    case = await repo.create_from_alert(alert)
-
-    # 匹配剧本
-    playbook = playbook_engine.match(alert)
-    playbook_id = None
-    if playbook:
-        playbook_id = playbook.id
-        await repo.update_status(case.case_id, CaseStatus.investigating)
-        # 写入 playbook_id (直接更新 model 字段)
-        from app.db.models import CaseModel
-        model = await session.get(CaseModel, case.case_id)
-        if model:
-            model.playbook_id = playbook.id
-            await session.commit()
-
-    # 触发 LangGraph 编排
-    await trigger_workflow(case.case_id, playbook_id)
+    data = await _ingest_and_dispatch(session, alert)
 
     # 同步索引到 OpenSearch (可选,失败不阻塞)
     await _try_index_opensearch(alert)
 
-    return ApiResponse(
-        success=True,
-        data={
-            "case_id": case.case_id,
-            "playbook_id": playbook_id,
-            "playbook_name": playbook.name if playbook else None,
-            "alert_id": alert.alert_id,
-            "severity": alert.severity.value,
-        },
-    )
+    return ApiResponse(success=True, data=data)
 
 
 @router.get("/types", response_model=ApiResponse)
@@ -75,8 +100,11 @@ async def list_alert_types() -> ApiResponse:
 
 
 @router.post("/wazuh-webhook", response_model=ApiResponse)
+@limiter.limit(WEBHOOK_LIMIT)
 async def wazuh_webhook(
-    payload: dict, session: AsyncSession = Depends(get_session)
+    request: Request,
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """接收 Wazuh 主动推送的告警 (webhook) → 转 Alert → 触发编排
 
@@ -95,33 +123,9 @@ async def wazuh_webhook(
     except Exception as e:
         return ApiResponse(success=False, error=f"Wazuh 告警解析失败: {e}")
 
-    repo = CaseRepository(session)
-    case = await repo.create_from_alert(alert)
-
-    playbook = playbook_engine.match(alert)
-    playbook_id = None
-    if playbook:
-        playbook_id = playbook.id
-        await repo.update_status(case.case_id, CaseStatus.investigating)
-        from app.db.models import CaseModel
-
-        model = await session.get(CaseModel, case.case_id)
-        if model:
-            model.playbook_id = playbook.id
-            await session.commit()
-
-    await trigger_workflow(case.case_id, playbook_id)
-
-    return ApiResponse(
-        success=True,
-        data={
-            "case_id": case.case_id,
-            "playbook_id": playbook_id,
-            "alert_id": alert.alert_id,
-            "severity": alert.severity.value,
-            "source": "wazuh_webhook",
-        },
-    )
+    data = await _ingest_and_dispatch(session, alert)
+    data["source"] = "wazuh_webhook"
+    return ApiResponse(success=True, data=data)
 
 
 @router.post("/wazuh/poll", response_model=ApiResponse)
@@ -159,38 +163,25 @@ async def poll_wazuh_alerts(
     if not alerts:
         return ApiResponse(success=True, data={"polled": 0, "cases": []})
 
-    # 每条告警建 Case + 匹配剧本 + 触发编排
-    from app.db.repositories import CaseRepository
-    from app.models.schemas import CaseStatus
-    from app.playbooks.engine import engine as playbook_engine
-    from app.agents.workflow import trigger_workflow
-
-    repo = CaseRepository(session)
-    cases: list[dict] = []
+    cases: list = []
+    deduped = 0
     for alert in alerts:
-        case = await repo.create_from_alert(alert)
-        playbook = playbook_engine.match(alert)
-        playbook_id = playbook.id if playbook else None
-        if playbook:
-            await repo.update_status(case.case_id, CaseStatus.investigating)
-            from app.db.models import CaseModel
-            model = await session.get(CaseModel, case.case_id)
-            if model:
-                model.playbook_id = playbook.id
-                await session.commit()
-        await trigger_workflow(case.case_id, playbook_id)
+        data = await _ingest_and_dispatch(session, alert)
+        if data["deduped"]:
+            deduped += 1
         cases.append(
             {
-                "case_id": case.case_id,
-                "playbook_id": playbook_id,
+                "case_id": data["case_id"],
+                "playbook_id": data["playbook_id"],
                 "severity": alert.severity.value,
                 "rule_id": alert.rule_id,
+                "deduped": data["deduped"],
             }
         )
 
     return ApiResponse(
         success=True,
-        data={"polled": len(alerts), "cases": cases},
+        data={"polled": len(alerts), "deduped": deduped, "cases": cases},
     )
 
 
@@ -213,7 +204,9 @@ async def _try_index_opensearch(alert) -> None:
 
 
 @router.get("/search", response_model=ApiResponse)
+@limiter.limit(SEARCH_LIMIT)
 async def search_alerts(
+    request: Request,
     q: str,
     size: int = 20,
     hours: int = 24,
@@ -301,7 +294,9 @@ async def list_supported_devices() -> ApiResponse:
 
 
 @router.post("/devices/{device_type}/webhook", response_model=ApiResponse)
+@limiter.limit(WEBHOOK_LIMIT)
 async def device_webhook(
+    request: Request,
     device_type: str,
     payload: dict,
     session: AsyncSession = Depends(get_session),
@@ -318,31 +313,7 @@ async def device_webhook(
     except DeviceParseError as e:
         return ApiResponse(success=False, error=str(e))
 
-    repo = CaseRepository(session)
-    case = await repo.create_from_alert(alert)
-
-    playbook = playbook_engine.match(alert)
-    playbook_id = None
-    if playbook:
-        playbook_id = playbook.id
-        await repo.update_status(case.case_id, CaseStatus.investigating)
-        from app.db.models import CaseModel
-
-        model = await session.get(CaseModel, case.case_id)
-        if model:
-            model.playbook_id = playbook.id
-            await session.commit()
-
-    await trigger_workflow(case.case_id, playbook_id)
+    data = await _ingest_and_dispatch(session, alert)
     await _try_index_opensearch(alert)
-
-    return ApiResponse(
-        success=True,
-        data={
-            "case_id": case.case_id,
-            "playbook_id": playbook_id,
-            "alert_id": alert.alert_id,
-            "severity": alert.severity.value,
-            "source": alert.source,
-        },
-    )
+    data["source"] = alert.source
+    return ApiResponse(success=True, data=data)

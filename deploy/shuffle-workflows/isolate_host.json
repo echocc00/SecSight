@@ -1,0 +1,50 @@
+{
+  "name": "SecSight - Isolate Host",
+  "description": "主机隔离 — SecSight 调用契约: execution_argument.target = {hostname, ip}。将下方 placeholder App 替换为真实 EDR/防火墙 App。",
+  "workflow_variables": [
+    {
+      "name": "action_payload",
+      "description": "SecSight 传入的 JSON (action_type/target/action_id/playbook_id/case_id)",
+      "value": "$exec"
+    }
+  ],
+  "triggers": [
+    {
+      "name": "SecSight Webhook",
+      "trigger_type": "WEBHOOK",
+      "status": "running"
+    }
+  ],
+  "actions": [
+    {
+      "name": "parse_target",
+      "app_name": "Shuffle Tools",
+      "app_version": "1.2.0",
+      "action_name": "execute_python",
+      "parameters": [
+        {
+          "name": "code",
+          "value": "import json\npayload = json.loads($exec)\ntarget = payload.get('target', {})\nreturn {'hostname': target.get('hostname'), 'ip': target.get('ip'), 'case_id': payload.get('case_id'), 'action_id': payload.get('action_id')}"
+        }
+      ]
+    },
+    {
+      "name": "isolate_via_edr",
+      "app_name": "REPLACE_WITH_YOUR_EDR_APP",
+      "action_name": "isolate_endpoint",
+      "_comment": "替换为真实 App: Wazuh (active-response isolate) / CrowdStrike / 华为 HiSec / 深信服 EDR",
+      "parameters": [
+        { "name": "hostname", "value": "$parse_target.hostname" },
+        { "name": "ip", "value": "$parse_target.ip" }
+      ]
+    }
+  ],
+  "_secsight_contract": {
+    "action_type": "isolate_host",
+    "expected_target_fields": ["hostname", "ip"],
+    "response_must_contain": "execution_id",
+    "rollback_workflow": "SecSight - Unisolate Host",
+    "autonomy_level": "L2 (强制双签)",
+    "risk": "critical"
+  }
+}

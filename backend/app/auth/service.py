@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -18,7 +19,8 @@ from app.core.config import settings
 
 # 配置
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 小时
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
+REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -71,9 +73,46 @@ def create_access_token(username: str, role: Role) -> str:
     payload = {
         "sub": username,
         "role": role.value,
+        "typ": "access",
         "exp": expire,
     }
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def create_refresh_token(username: str) -> tuple[str, str, datetime]:
+    """签发 refresh token,返回 (token, jti, expires_at)
+
+    jti 是 DB 主键,token 原文只回给客户端,DB 只存 hash —— 库被读也无法伪造。
+    """
+    token_id = str(uuid4())
+    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    payload = {
+        "sub": username,
+        "jti": token_id,
+        "typ": "refresh",
+        "exp": expire,
+    }
+    token = jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+    return token, token_id, expire.replace(tzinfo=None)
+
+
+def decode_refresh_token(token: str) -> tuple[str, str]:
+    """校验 refresh token 签名与类型,返回 (username, jti)
+
+    只做无状态校验;是否被吊销由 RefreshTokenRepository 查 DB 决定。
+    """
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"refresh token 无效: {e}") from e
+
+    if payload.get("typ") != "refresh":
+        raise HTTPException(status_code=401, detail="不是 refresh token")
+    username = payload.get("sub")
+    token_id = payload.get("jti")
+    if not username or not token_id:
+        raise HTTPException(status_code=401, detail="refresh token 缺少 sub/jti")
+    return username, token_id
 
 
 def decode_token(token: str) -> CurrentUser:
@@ -81,6 +120,10 @@ def decode_token(token: str) -> CurrentUser:
         payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         username = payload.get("sub")
         role_str = payload.get("role")
+        if payload.get("typ") == "refresh":
+            raise HTTPException(
+                status_code=401, detail="refresh token 不能用于访问 API"
+            )
         if not username or role_str not in [r.value for r in Role]:
             raise HTTPException(status_code=401, detail="无效 token")
         return CurrentUser(username=username, role=Role(role_str))

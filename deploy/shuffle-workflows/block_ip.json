@@ -1,0 +1,40 @@
+{
+  "name": "SecSight - Block IP",
+  "description": "封禁 IP — SecSight 契约: execution_argument.target = {ip, direction}。替换 placeholder 为真实防火墙/WAF App。",
+  "triggers": [
+    { "name": "SecSight Webhook", "trigger_type": "WEBHOOK", "status": "running" }
+  ],
+  "actions": [
+    {
+      "name": "parse_target",
+      "app_name": "Shuffle Tools",
+      "app_version": "1.2.0",
+      "action_name": "execute_python",
+      "parameters": [
+        {
+          "name": "code",
+          "value": "import json\npayload = json.loads($exec)\nt = payload.get('target', {})\nreturn {'ip': t.get('ip'), 'direction': t.get('direction', 'both'), 'case_id': payload.get('case_id')}"
+        }
+      ]
+    },
+    {
+      "name": "block_on_firewall",
+      "app_name": "REPLACE_WITH_YOUR_FIREWALL_APP",
+      "action_name": "add_block_rule",
+      "_comment": "替换为: 华为 USG / 天融信 NGFW / 深信服 AF / CrowdSec / iptables via SSH",
+      "parameters": [
+        { "name": "ip", "value": "$parse_target.ip" },
+        { "name": "direction", "value": "$parse_target.direction" },
+        { "name": "comment", "value": "SecSight case $parse_target.case_id" }
+      ]
+    }
+  ],
+  "_secsight_contract": {
+    "action_type": "block_ip",
+    "expected_target_fields": ["ip", "direction"],
+    "response_must_contain": "execution_id",
+    "rollback_workflow": "SecSight - Unblock IP",
+    "autonomy_level": "L2",
+    "risk": "high"
+  }
+}

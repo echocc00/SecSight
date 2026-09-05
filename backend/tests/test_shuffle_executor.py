@@ -36,9 +36,50 @@ class TestShuffleExecutorInit:
         with pytest.raises(ShuffleError, match="base_url"):
             ShuffleExecutor(base_url="", api_key="")
 
-    def test_default_workflow_map(self):
+    def test_workflow_map_empty_when_unconfigured(self):
+        """未配置任何环境变量时 map 为空 (execute 抛错触发降级)"""
         ex = ShuffleExecutor(base_url="http://s:3001", api_key="k")
-        assert "isolate_host" in ex.workflow_map
+        assert ex.workflow_map == {}
+
+    def test_workflow_map_from_env_var(self, monkeypatch):
+        """SHUFFLE_WORKFLOW_<ACTION> 环境变量加载"""
+        monkeypatch.setenv("SHUFFLE_WORKFLOW_ISOLATE_HOST", "wf-abc-123")
+        monkeypatch.setenv("SHUFFLE_WORKFLOW_BLOCK_IP", "wf-def-456")
+        ex = ShuffleExecutor(base_url="http://s:3001", api_key="k")
+        assert ex.workflow_map["isolate_host"] == "wf-abc-123"
+        assert ex.workflow_map["block_ip"] == "wf-def-456"
+        assert "kill_process" not in ex.workflow_map
+
+    def test_workflow_map_from_json_setting(self, monkeypatch):
+        """SHUFFLE_WORKFLOW_MAP JSON 批量配置"""
+        from app.core.config import settings
+
+        monkeypatch.setattr(
+            settings,
+            "shuffle_workflow_map",
+            '{"kill_process": "wf-kill-1", "notify": "wf-notify-1"}',
+        )
+        ex = ShuffleExecutor(base_url="http://s:3001", api_key="k")
+        assert ex.workflow_map["kill_process"] == "wf-kill-1"
+        assert ex.workflow_map["notify"] == "wf-notify-1"
+
+    def test_env_var_overrides_json(self, monkeypatch):
+        """单动作环境变量优先于 JSON 映射"""
+        from app.core.config import settings
+
+        monkeypatch.setattr(
+            settings, "shuffle_workflow_map", '{"block_ip": "from-json"}'
+        )
+        monkeypatch.setenv("SHUFFLE_WORKFLOW_BLOCK_IP", "from-env")
+        ex = ShuffleExecutor(base_url="http://s:3001", api_key="k")
+        assert ex.workflow_map["block_ip"] == "from-env"
+
+    def test_invalid_json_map_does_not_crash(self, monkeypatch):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "shuffle_workflow_map", "{not valid json")
+        ex = ShuffleExecutor(base_url="http://s:3001", api_key="k")
+        assert ex.workflow_map == {}
 
 
 class TestShuffleExecute:

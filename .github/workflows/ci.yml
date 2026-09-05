@@ -7,6 +7,32 @@ on:
     branches: [main]
 
 jobs:
+  dependency-lock-check:
+    name: 依赖锁一致性 (lock 与 pyproject 同步)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 校验 lock 未过期
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip pip-tools
+          # 改了 pyproject 却忘了重跑 pip-compile,会让镜像装到未审计的版本
+          for spec in "requirements.lock:" "requirements-dev.lock:--extra dev" "requirements-pg.lock:--extra pg"; do
+            out="${spec%%:*}"
+            extra="${spec#*:}"
+            cp "$out" "/tmp/$out.orig"
+            pip-compile --quiet --strip-extras $extra --output-file="$out" pyproject.toml
+            if ! diff -q "/tmp/$out.orig" "$out"; then
+              echo "❌ $out 与 pyproject.toml 不同步,请重跑: pip-compile --strip-extras $extra --output-file=$out pyproject.toml"
+              diff "/tmp/$out.orig" "$out" | head -40
+              exit 1
+            fi
+          done
+          echo "✅ 所有 lock 文件与 pyproject.toml 同步"
+
   license-isolation:
     name: License 隔离检查 (AGPL/GPL 不被 import)
     runs-on: ubuntu-latest
@@ -21,7 +47,50 @@ jobs:
             echo "SecSight 主体必须仅通过 HTTP 调用这些组件,不 import 其代码"
             exit 1
           fi
-          echo "✅ license 隔离正常: 无 AGPL/GPL import"
+          # 补充: subprocess 调用 AGPL CLI 也算违反
+          if grep -rE 'subprocess\.(run|call|Popen)\(.*"(shuffle|wazuh-manager|velociraptor|iris-web)"' app/; then
+            echo "❌ 违反 license 隔离: subprocess 调用 AGPL 组件 CLI"
+            exit 1
+          fi
+          echo "✅ license 隔离正常: 无 AGPL/GPL import/subprocess"
+
+  dependency-license-scan:
+    name: 依赖 License 全量扫描
+    runs-on: ubuntu-latest
+    needs: license-isolation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装 backend 依赖 + 扫描 Python license
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.lock
+          pip install -r requirements-pg.lock
+          pip install pip-licenses
+          pip-licenses --format=csv --output-file=python-licenses.csv
+          # 阻断 AGPL/GPL/SSPL,放行 LGPL/MPL (动态链接不传染,如 psycopg)
+          python ../scripts/check_licenses.py python-licenses.csv
+      - name: 扫描前端 license
+        working-directory: frontend
+        run: |
+          npm ci --legacy-peer-deps
+          npx license-checker --csv --out ../frontend-licenses.csv
+          if grep -iE "AGPL|SSPL|(^|[^L])GPL-?[23]" ../frontend-licenses.csv; then
+            echo "❌ 前端发现传染性 license 依赖"
+            exit 1
+          fi
+          echo "✅ 前端依赖 license 合规"
+      - name: 上传 license 清单
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: license-inventory
+          path: |
+            backend/python-licenses.csv
+            frontend-licenses.csv
 
       - name: 检查 AGPL 组件在隔离网络
         run: |
@@ -44,7 +113,7 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+          pip install -r requirements-dev.lock
       - name: 运行测试
         working-directory: backend
         env:
@@ -64,6 +133,96 @@ jobs:
         with:
           name: coverage-report
           path: backend/coverage.xml
+
+  integration-pg:
+    name: Postgres 集成测试 (Checkpointer + Hash Chain)
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: secsight
+          POSTGRES_PASSWORD: test_pw
+          POSTGRES_DB: secsight_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U secsight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装依赖
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.lock
+          pip install psycopg[binary] langgraph-checkpoint-postgres
+      - name: 跑 Postgres 集成测试
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://secsight:test_pw@localhost:5432/secsight_test
+          ENABLE_CHECKPOINTER: "true"
+          SECSIGHT_PG_LIVE: "1"
+          SECSIGHT_ENV: test
+          SECSIGHT_MOCK_MODE: "true"
+          PLAYBOOKS_DIR: ${{ github.workspace }}/playbooks
+        run: |
+          python -m pytest tests/integration/ -v -p no:warnings
+
+  sbom-scan:
+    name: SBOM + 镜像漏洞扫描
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: 生成 backend SBOM (CycloneDX)
+        working-directory: backend
+        run: |
+          pip install cyclonedx-bom
+          # 从 lock 生成而非当前环境: 这个 job 没装项目依赖,
+          # environment 模式只会导出 CI runner 自带的包
+          cyclonedx-py requirements requirements.lock -o sbom-backend.json
+      - name: 生成 frontend SBOM
+        working-directory: frontend
+        run: |
+          npm ci --legacy-peer-deps
+          npx @cyclonedx/cyclonedx-npm --output-file ../sbom-frontend.json
+      - name: 构建 backend 镜像并 Trivy 扫描
+        run: |
+          docker build -t secsight-backend:ci ./backend
+          curl -sf https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy image --exit-code 0 --severity HIGH,CRITICAL --format json -o trivy-backend.json secsight-backend:ci || true
+          # CRITICAL 漏洞阻断
+          trivy image --exit-code 1 --severity CRITICAL secsight-backend:ci
+      - name: 前端 bundle size 检查
+        working-directory: frontend
+        run: |
+          npm run build
+          # gzip 后 main bundle 不超 300KB (app 页预算)
+          MAIN=$(find dist/assets/*.js -printf '%s\n' | sort -rn | head -1)
+          echo "largest bundle: $MAIN bytes"
+          if [ "$MAIN" -gt 307200 ]; then
+            echo "❌ 前端 bundle 超过 300KB 预算"
+            exit 1
+          fi
+      - name: 上传 SBOM + 扫描结果
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-artifacts
+          path: |
+            backend/sbom-backend.json
+            sbom-frontend.json
+            trivy-backend.json
 
   build:
     name: Docker 构建

@@ -1,6 +1,7 @@
-import axios from "axios";
+import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
 
 const TOKEN_KEY = "secsight_token";
+const REFRESH_KEY = "secsight_refresh";
 const ROLE_KEY = "secsight_role";
 
 const client = axios.create({
@@ -17,18 +18,59 @@ client.interceptors.request.use((config) => {
   return config;
 });
 
-// 响应拦截: 401 清 token 跳登录
+function clearSession() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(ROLE_KEY);
+}
+
+function redirectToLogin() {
+  clearSession();
+  if (!window.location.pathname.startsWith("/login")) {
+    window.location.href = "/login";
+  }
+}
+
+// 单飞: 并发 401 只发一次 /auth/refresh,其余请求等这一次的结果
+let refreshInFlight: Promise<string> | null = null;
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshToken = localStorage.getItem(REFRESH_KEY);
+  if (!refreshToken) throw new Error("no refresh token");
+
+  // 用裸 axios 而非 client,避免刷新请求自身被 401 拦截器递归处理
+  const resp = await axios.post("/api/auth/refresh", { refresh_token: refreshToken });
+  const { access_token, refresh_token: rotated, role } = resp.data;
+  localStorage.setItem(TOKEN_KEY, access_token);
+  localStorage.setItem(REFRESH_KEY, rotated);
+  localStorage.setItem(ROLE_KEY, role);
+  return access_token;
+}
+
+// 响应拦截: 401 先试 refresh 续期并重放原请求,失败才跳登录
 client.interceptors.response.use(
   (res) => res,
-  (err) => {
-    if (err?.response?.status === 401) {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(ROLE_KEY);
-      if (!window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
-      }
+  async (err: AxiosError) => {
+    const original = err.config as InternalAxiosRequestConfig & { _retried?: boolean };
+    const isAuthEndpoint = original?.url?.includes("/auth/refresh") || original?.url?.includes("/auth/login");
+
+    if (err?.response?.status !== 401 || !original || original._retried || isAuthEndpoint) {
+      if (err?.response?.status === 401 && !isAuthEndpoint) redirectToLogin();
+      return Promise.reject(err);
     }
-    return Promise.reject(err);
+
+    original._retried = true;
+    try {
+      refreshInFlight = refreshInFlight ?? refreshAccessToken().finally(() => {
+        refreshInFlight = null;
+      });
+      const token = await refreshInFlight;
+      original.headers.Authorization = `Bearer ${token}`;
+      return client(original);
+    } catch {
+      redirectToLogin();
+      return Promise.reject(err);
+    }
   }
 );
 
@@ -41,14 +83,19 @@ export interface ApiResponse<T = any> {
 export const auth = {
   login: async (username: string, password: string) => {
     const r = await client.post("/auth/login", { username, password });
-    const { access_token, role } = r.data;
+    const { access_token, refresh_token, role } = r.data;
     localStorage.setItem(TOKEN_KEY, access_token);
+    localStorage.setItem(REFRESH_KEY, refresh_token);
     localStorage.setItem(ROLE_KEY, role);
     return r.data;
   },
-  logout: () => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(ROLE_KEY);
+  logout: async () => {
+    const refreshToken = localStorage.getItem(REFRESH_KEY);
+    if (refreshToken) {
+      // 服务端吊销 refresh token;网络失败也要清本地状态
+      await client.post("/auth/logout", { refresh_token: refreshToken }).catch(() => undefined);
+    }
+    clearSession();
     window.location.href = "/login";
   },
   getMe: () => client.get<ApiResponse>("/auth/me").then((r) => r.data.data),

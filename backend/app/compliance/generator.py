@@ -52,9 +52,10 @@ class ReportGenerator:
 
             evidence = await evidence_repo.get_by_case(case_id)
             audit_logs = await _get_audit_logs(session, case_id)
+            chain = await _verify_audit_chain(session)
 
         # 准备报告数据
-        report_data = self._build_report_data(case, evidence, audit_logs)
+        report_data = self._build_report_data(case, evidence, audit_logs, chain)
         # 渲染
         template_name = f"compliance_report.{format}.j2"
         try:
@@ -83,6 +84,7 @@ class ReportGenerator:
         case: Any,
         evidence: dict | None,
         audit_logs: list[dict],
+        chain: dict | None = None,
     ) -> dict:
         """构建报告上下文"""
         judgment = case.judgment
@@ -101,6 +103,7 @@ class ReportGenerator:
             "judgment": judgment.model_dump(mode="json") if judgment else None,
             "evidence": evidence,
             "audit_logs": normalized_logs,
+            "audit_chain": chain or {},
             "alerts": [a.model_dump(mode="json") for a in case.alerts],
             "actions": [a.model_dump(mode="json") for a in case.proposed_actions],
             "executions": [e.model_dump(mode="json") for e in case.execution_log],
@@ -117,6 +120,13 @@ async def _get_audit_logs(session, case_id: str) -> list[dict]:
 
     repo = AuditLogRepository(session)
     return await repo.list_by_case(case_id)
+
+
+async def _verify_audit_chain(session) -> dict:
+    """报告内嵌 hash chain 校验结果 —— 监管方需要能自证留痕未被篡改"""
+    from app.db.repositories import AuditLogRepository
+
+    return await AuditLogRepository(session).verify_chain()
 
 
 report_generator = ReportGenerator()

@@ -11,7 +11,7 @@ SecSight 计划商业化,AGPL/GPL 组件必须进程隔离:
   - Wazuh (GPL-2.0)
   - KubeHound (AGPL-3.0)
   - Velociraptor (AGPL-3.0)
-- 这些组件作为**独立 docker 服务**部署,仅通过 HTTP/Webhook/REST/MCP 调用
+- 这些组件作为**独立 docker 服务**部署,仅通过 HTTP/Webhook/REST 调用
 - **禁止**安装 DFIR-IRIS 的 AGPL 模块: iris-skeleton-module / iris-mwdb-module / iris-intelowl-module (仅用主本体 iris-web, LGPL-3.0)
 - **禁止** fork 或复制 ASP (agentic-soc-platform) 代码(其无正式 LICENSE 文件),仅借鉴领域模型设计
 
@@ -21,7 +21,7 @@ SecSight 计划商业化,AGPL/GPL 组件必须进程隔离:
 
 - AI 编排: **LangGraph StateGraph** (非 ASP/AutoGen)
 - LLM 调用: 经 **LiteLLM 网关**统一路由,不直接调厂商 SDK
-- 工具调用: **MCP 协议**,每个外部系统封装独立 MCP server
+- 工具调用: **HTTP/REST 直调** (License 隔离通过网络边界实现,不 import 隔离组件 SDK)
 - 数据归一化: **ECS schema**,经 Vector 入 OpenSearch
 - 自主性: 每个处置动作必须标注 `autonomy_level` (L1-L5),L2 高危强制双签
 - LLM 输出: 强制 Pydantic 结构化 + ATT&CK TTP 白名单(RAG 召回才能引用)
@@ -53,7 +53,7 @@ SecSight 计划商业化,AGPL/GPL 组件必须进程隔离:
 - `backend/app/llm_gateway/` — LiteLLM 集成
 - `backend/app/threat_intel/` — 情报抽象 + provider
 - `playbooks/phase1/` — 6 个 P0 剧本 YAML
-- `mcp_servers/` — MCP 工具 server
+- `backend/app/integrations/` — 外部系统 HTTP 客户端 (wazuh/opensearch/notify/国产设备)
 - `knowledge/L0-L3` — 4 层知识库
 - `policies/` — 自主性/审批规则
 - `deploy/` — docker-compose + 配置

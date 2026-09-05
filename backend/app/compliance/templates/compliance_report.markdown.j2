@@ -55,8 +55,19 @@
 
 ## 七、合规留痕
 {% for log in audit_logs %}
-- [{{ log.ts[:19] if log.ts else "—" }}] {{ log.action }} by {{ log.actor }}
+- `#{{ log.seq if log.seq else "?" }}` [{{ log.ts[:19] if log.ts else "—" }}] {{ log.action }} by {{ log.actor }} (hash `{{ log.entry_hash[:16] if log.entry_hash else "—" }}`)
 {% endfor %}
+
+### 审计链完整性校验
+{% if audit_chain and audit_chain.valid %}
+- ✅ hash chain 校验通过,{{ audit_chain.verified_count }} 条记录未被篡改
+- 链头哈希: `{{ audit_chain.chain_head }}`
+{% elif audit_chain %}
+- ⚠️ 校验失败,断点序号 {{ audit_chain.broken_at_seq }}: {{ audit_chain.reason }}
+- 已验证记录数: {{ audit_chain.verified_count }}
+{% else %}
+- 未执行审计链校验
+{% endif %}
 
 ## 八、整改建议
 - 修复检测规则覆盖盲区

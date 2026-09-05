@@ -18,6 +18,9 @@ os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DB}"
 os.environ["SECSIGHT_ENV"] = "test"
 os.environ["SECSIGHT_MOCK_MODE"] = "true"
 os.environ["PLAYBOOKS_DIR"] = str(_PROJECT_ROOT / "playbooks")
+# 限流默认关闭: 全套测试共用一个 limiter 计数器,开启会让注入类测试互相踩配额。
+# test_rate_limit.py 用 rate_limiter fixture 局部打开。
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
 import httpx  # noqa: E402
 import pytest_asyncio  # noqa: E402
@@ -51,3 +54,16 @@ async def db_session():
 
     async with async_session() as session:
         yield session
+
+
+@pytest_asyncio.fixture
+async def rate_limiter():
+    """临时打开限流并清空计数器 (用完还原,避免污染其他测试)"""
+    from app.core.security import limiter
+
+    was_enabled = limiter.enabled
+    limiter.enabled = True
+    limiter.reset()
+    yield limiter
+    limiter.reset()
+    limiter.enabled = was_enabled

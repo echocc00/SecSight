@@ -25,8 +25,10 @@ structlog.configure(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动: 建表 (开发用,生产走 alembic)
-    if settings.env == "development":
+    _log = structlog.get_logger()
+
+    # 启动: dev 用 create_all 快速迭代,生产校验 alembic 版本
+    if settings.env in ("development", "test"):
         await init_db()
         # 种子默认用户
         try:
@@ -37,13 +39,30 @@ async def lifespan(app: FastAPI):
                 repo = UserRepository(session)
                 n = await repo.seed_defaults()
                 if n:
-                    structlog.get_logger().info(f"users.seeded count={n}")
+                    _log.info(f"users.seeded count={n}")
         except Exception as e:
-            structlog.get_logger().warning(f"users.seed_failed error={e}")
+            _log.warning(f"users.seed_failed error={e}")
+    else:
+        # 生产: 不自动 migrate (多实例并发会锁),仅校验版本
+        from app.db.migration_check import assert_head
+
+        await assert_head()
+
     # 密钥校验 (警告不阻塞启动)
     for w in validate_secrets():
-        structlog.get_logger().warning(w)
+        _log.warning(w)
+    # 执行链路能力声明 (让用户知道哪些动作会走 mock)
+    from app.core.security import validate_execution_config
+
+    for w in validate_execution_config():
+        _log.warning(w)
+
+    # Proactive Agent 定时调度
+    from app.agents.scheduler import shutdown_scheduler, start_scheduler
+
+    start_scheduler()
     yield
+    await shutdown_scheduler()
 
 
 def create_app() -> FastAPI:
@@ -66,13 +85,12 @@ def create_app() -> FastAPI:
     )
 
     # 速率限制
-    from slowapi import _rate_limit_exceeded_handler
     from slowapi.errors import RateLimitExceeded
 
-    from app.core.security import limiter
+    from app.core.security import limiter, rate_limit_exceeded_handler
 
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
     @app.get("/health")
     async def health() -> dict:
@@ -109,12 +127,61 @@ def create_app() -> FastAPI:
         except Exception:
             components["litellm"] = "down (mock mode 可忽略)"
 
+        # OpenCTI (第 3 情报源,AGPL 隔离组件,仅 HTTP)
+        if settings.enable_opencti:
+            from app.integrations.opencti import health_check as opencti_health
+
+            opencti = await opencti_health()
+            components["opencti"] = (
+                "ok" if opencti["status"] == "ok" else f"{opencti['status']}"
+            )
+
+        # 处置执行链路真实能力 (关键: 让用户知道哪些动作走 mock)
+        from app.models.schemas import ActionType
+
+        if settings.mock_mode or not settings.enable_shuffle:
+            execution = {
+                "mode": "mock",
+                "reason": "mock_mode=true" if settings.mock_mode else "ENABLE_SHUFFLE=false",
+                "configured_actions": [],
+                "mock_actions": [a.value for a in ActionType],
+            }
+        else:
+            from app.execution.shuffle import load_workflow_map
+
+            wf_map = load_workflow_map()
+            configured = [a.value for a in ActionType if wf_map.get(a.value)]
+            execution = {
+                "mode": "shuffle" if configured else "mock",
+                "reason": None if configured else "无 workflow_id 配置",
+                "configured_actions": configured,
+                "mock_actions": [a.value for a in ActionType if not wf_map.get(a.value)],
+            }
+
+        # Proactive 调度器状态
+        from app.agents.scheduler import scheduler_status
+        from app.core.security import rate_limit_config
+        from app.retrieval.embedding import embedding_status
+
         return {
             "status": "ok",
             "env": settings.env,
             "mock_mode": settings.mock_mode,
-            "version": "0.2.0",
+            "version": "0.6.0",
             "components": components,
+            "execution": execution,
+            "proactive_scheduler": scheduler_status(),
+            "rate_limit": rate_limit_config(),
+            "features": {
+                "knowledge_sediment": settings.enable_knowledge_sediment,
+                "alert_dedup": settings.enable_alert_dedup,
+                "checkpointer": settings.enable_checkpointer,
+                "opensearch": settings.enable_opensearch,
+                "qdrant": settings.enable_qdrant,
+                "threat_intel": settings.enable_threat_intel,
+                "opencti": settings.enable_opencti,
+            },
+            "embedding": embedding_status(),
             "ts": datetime.utcnow().isoformat(),
         }
 

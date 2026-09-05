@@ -205,7 +205,7 @@ def get_threat_intel_service() -> ThreatIntelService:
     """情报服务工厂
 
     mock_mode=True 或 enable_threat_intel=False → 纯 mock
-    否则 → 真实 AbuseIPDB+OTX + mock 降级
+    否则 → 真实 AbuseIPDB+OTX+OpenCTI + mock 降级
     """
     from app.core.config import settings
 
@@ -222,10 +222,24 @@ def get_threat_intel_service() -> ThreatIntelService:
             )
         except ThreatIntelError as e:
             log.warning("threat_intel.abuseipdb_init_failed", error=str(e))
-    if settings.otx_api_key or True:  # OTX 无 key 也能用 (限速)
-        providers.append(
-            OTXProvider(settings.otx_api_key, settings.threat_intel_timeout_seconds)
-        )
+    # OTX 无 key 也能用 (走匿名限速配额)
+    providers.append(
+        OTXProvider(settings.otx_api_key, settings.threat_intel_timeout_seconds)
+    )
+    if settings.enable_opencti:
+        try:
+            from app.integrations.opencti import OpenCTIProvider
+
+            providers.append(
+                OpenCTIProvider(
+                    settings.opencti_base_url,
+                    settings.opencti_token,
+                    settings.opencti_timeout_seconds,
+                    settings.opencti_malicious_score,
+                )
+            )
+        except ThreatIntelError as e:
+            log.warning("threat_intel.opencti_init_failed", error=str(e))
 
     if not providers:
         log.warning("threat_intel.no_real_providers_fallback_mock")
