@@ -1,0 +1,9 @@
+{
+  "alert_name": "主机中毒-挖矿木马",
+  "level": "严重",
+  "threat_type": "miner",
+  "src_ip": "10.0.5.33",
+  "dst_ip": "45.33.32.156",
+  "domain": "pool.supportxmr.com",
+  "device": "sangfor-SIP"
+}

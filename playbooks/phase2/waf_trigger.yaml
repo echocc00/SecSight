@@ -1,0 +1,49 @@
+# WAF 触发 (P0 应用,设计 §4.3)
+id: pb_waf_trigger_v1
+name: WAF 拦截攻击
+category: application
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L4
+description: |
+  WAF 拦截到攻击请求 (SQLi/XSS/恶意爬虫)。
+triggers:
+  sigma_rules: [waf_trigger, waf_sqli, waf_xss]
+  wazuh_rules: ["933100"]
+  process_patterns:
+    names: [waf]
+mitre_mapping:
+  tactics: [TA0001 Initial Access]
+  techniques: [T1190 Exploit Public-Facing Application]
+investigation_steps:
+  - id: I1
+    name: 请求详情分析
+    tools: [waf_log_query]
+    autonomy: L4
+    output: attack_request
+  - id: I2
+    name: 源 IP 情报
+    tools: [abuseipdb_query, opencti_query]
+    autonomy: L4
+    output: intel
+containment_actions:
+  - id: A1_block_ip
+    name: 封禁攻击源 IP
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    tools: [waf_block, firewall_block]
+  - id: A2_notify
+    name: 通知应用负责人
+    action_type: notify
+    autonomy: L4
+    tools: [notify]
+  - id: A3_review
+    name: 复核 WAF 规则
+    action_type: notify
+    autonomy: L5
+    tools: [waf_rule_review]
+knowledge_assets:
+  iocs: [attack_ips]
+  ttps: [web_attack_ttps]

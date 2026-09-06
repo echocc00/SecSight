@@ -17,6 +17,7 @@ Workflow 模板见 deploy/shuffle-workflows/。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -158,3 +159,27 @@ class ShuffleExecutor(ActionExecutor):
                 return resp.json()
         except Exception as e:  # noqa: BLE001
             raise ShuffleError(f"Shuffle 状态查询失败: {e}") from e
+
+    async def poll_to_terminal(
+        self,
+        execution_id: str,
+        attempts: int = 10,
+        interval_seconds: float = 2.0,
+    ) -> dict:
+        """轮询 execution 直到终态,返回归一化结果 (超时保留 executing)
+
+        终态判定兼容 Shuffle 各版本状态字段: success/completed/finished,
+        failure/failed/error/timeout/canceled。
+        """
+        for _ in range(attempts):
+            await asyncio.sleep(interval_seconds)
+            try:
+                status = await self.get_execution_status(execution_id)
+            except ShuffleError:
+                continue
+            state = str(status.get("status") or "").lower()
+            if state in ("success", "completed", "finished"):
+                return {"success": True, "status": "success", "shuffle_status": status}
+            if state in ("failure", "failed", "error", "timeout", "canceled", "aborted"):
+                return {"success": False, "status": "failed", "shuffle_status": status}
+        return {"success": None, "status": "executing", "shuffle_status": None}

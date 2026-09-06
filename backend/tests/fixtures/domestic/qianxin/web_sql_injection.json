@@ -1,0 +1,13 @@
+{
+  "alert_name": "SQL 注入攻击",
+  "serverity": "高危",
+  "thrtype": "sqli",
+  "srcip": "45.33.32.156",
+  "src_port": 40123,
+  "dstip": "10.0.1.15",
+  "dst_port": 3306,
+  "proto": "tcp",
+  "device": "qianxin-tianqing-01",
+  "rule_id": "QINX-2001",
+  "mitre_technique": "T1190"
+}

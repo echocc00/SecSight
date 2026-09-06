@@ -1,0 +1,9 @@
+{
+  "name": "异常下行流量",
+  "severity": "中危",
+  "priority": 6,
+  "src_ip": "10.1.0.5",
+  "dst_ip": "10.2.0.8",
+  "iface": "eth1",
+  "sig_id": "TS-3321"
+}

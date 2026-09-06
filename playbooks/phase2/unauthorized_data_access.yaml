@@ -1,0 +1,53 @@
+# 敏感数据访问/越权 (P0 数据,设计 §4.4)
+id: pb_unauthorized_access_v1
+name: 敏感数据越权访问处置
+category: data
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L3
+description: |
+  未授权用户访问敏感数据 (越权读/导出 PII),合规风险。
+triggers:
+  sigma_rules: [unauthorized_sensitive_access, pii_overread]
+  process_patterns:
+    names: [dlp]
+mitre_mapping:
+  tactics: [TA0009 Collection]
+  techniques: [T1213 Data from Information Repositories, T1552 Unsecured Credentials]
+investigation_steps:
+  - id: I1
+    name: 访问行为确认
+    tools: [dlp_query, data_access_audit]
+    autonomy: L4
+    output: accessed_scope
+  - id: I2
+    name: 账号权限复核
+    tools: [iam_query]
+    autonomy: L4
+    output: permission_gap
+containment_actions:
+  - id: A1_freeze_account
+    name: 冻结越权账号
+    action_type: freeze_account
+    autonomy: L2
+    approval: double
+    tools: [iam_lock]
+  - id: A2_notify
+    name: 通知数据责任人
+    action_type: notify
+    autonomy: L4
+    tools: [notify]
+  - id: A3_report_regulator
+    name: 合规上报
+    action_type: report_regulator
+    autonomy: L2
+    approval: double
+    tools: [compliance_report_generator]
+knowledge_assets:
+  iocs: [sensitive_accessors]
+  ttps: [data_access_ttps]
+compliance:
+  dengbao_level: 3
+  report_required: true
+  report_deadline_hours: 24

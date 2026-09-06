@@ -1,0 +1,10 @@
+{
+  "alert_name": "WebShell 上传",
+  "severity": "高",
+  "event_type": "webshell_upload",
+  "src_ip": "198.51.100.7",
+  "dst_ip": "10.0.2.20",
+  "device_ip": "10.0.0.1",
+  "sensor": "qianxin-taiyang",
+  "mitre_technique": "T1505.003"
+}

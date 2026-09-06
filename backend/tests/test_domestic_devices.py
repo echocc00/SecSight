@@ -130,13 +130,15 @@ class TestDeviceWebhookEndpoint:
                 "src_ip": "45.10.0.1",
                 "dst_ip": "10.0.1.15",
                 "mitre_technique": "T1190",
+                # payload 特征使命中 web_attack (而非同为 T1190 的 waf_trigger)
+                "query": "id=1 OR 1=1",
             },
         )
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["source"] == "qianxin"
         assert data["case_id"]
-        # SQL注入应匹配 web_attack 剧本
+        # SQL注入 payload 命中 web_attack 剧本
         assert data["playbook_id"] == "pb_web_attack_v1"
 
     @pytest.mark.asyncio

@@ -1,0 +1,56 @@
+# DNS 隧道 (P1 网络,设计 §4.2)
+id: pb_dns_tunneling_v1
+name: DNS 隧道检测与阻断
+category: network
+priority: P1
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+description: |
+  恶意软件通过 DNS 协议隐蔽外传数据 (iodine/dnscat2)。
+triggers:
+  sigma_rules: [dns_tunneling]
+  suricata_rules: ["ET POLICY DNS tunneling"]
+  indicators:
+    commands: ["dnscat", "iodine"]
+mitre_mapping:
+  tactics: [TA0011 Command and Control]
+  techniques: [T1071.004 DNS, T1048 Exfiltration Over Alternative Protocol]
+investigation_steps:
+  - id: I1
+    name: 隧道流量确认
+    tools: [dns_log_query, zeek_query]
+    autonomy: L4
+    output: tunnel_domains
+  - id: I2
+    name: 关联主机
+    tools: [dhcp_arp_query, sysmon_network]
+    autonomy: L4
+    output: asset
+containment_actions:
+  - id: A1_block_domain
+    name: 封禁隧道域名
+    action_type: block_domain
+    autonomy: L2
+    approval: double
+    tools: [dns_sinkhole, firewall_block_domain]
+  - id: A2_isolate_host
+    name: 隔离主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response]
+  - id: A3_kill_process
+    name: 终止隧道进程
+    action_type: kill_process
+    autonomy: L2
+    approval: double
+    tools: [edr_kill]
+  - id: A4_notify
+    name: 通知网络组
+    action_type: notify
+    autonomy: L4
+    tools: [notify]
+knowledge_assets:
+  iocs: [tunnel_domains]
+  ttps: [c2_dns_ttps]

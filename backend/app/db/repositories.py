@@ -138,6 +138,37 @@ class CaseRepository:
             model.updated_at = datetime.utcnow()
             await self.session.commit()
 
+    async def update_execution_status(
+        self, case_id: str, action_id: str, status: str, result: dict
+    ) -> None:
+        """更新某动作最新一条执行记录为终态 (异步 Shuffle 回查用)
+
+        append_execution 只追加;真实 SOAR 异步执行完成后的状态回写走这里。
+        不可变重建整个列表 —— SQLAlchemy JSON 列的 in-place dict 修改
+        (step["status"]=... 再整体赋值) 在部分路径不被跟踪,导致提交后不生效。
+        """
+        model = await self.session.get(CaseModel, case_id)
+        if not model:
+            return
+        current = model.execution_log or []
+        rebuilt: list[dict] = []
+        updated = False
+        for step in reversed(current):
+            entry = dict(step)  # 不可变: 重建每条,不修改原对象
+            if not updated and entry.get("action_id") == action_id:
+                entry["status"] = status
+                entry["finished_at"] = datetime.utcnow().isoformat()
+                merged = dict(entry.get("result") or {})
+                merged.update(result)
+                entry["result"] = merged
+                updated = True
+            rebuilt.append(entry)
+        if not updated:
+            return
+        model.execution_log = list(reversed(rebuilt))
+        model.updated_at = datetime.utcnow()
+        await self.session.commit()
+
     async def set_evidence_pack(self, case_id: str, pack_id: str) -> None:
         model = await self.session.get(CaseModel, case_id)
         if model:
@@ -399,6 +430,44 @@ class AuditLogRepository:
             "verified_count": len(logs),
             "chain_head": prev,
         }
+
+    async def purge_before(self, cutoff: datetime) -> int:
+        """清理超过保留期的审计记录 (等保 2.0 三级: 保存不少于 180 天)
+
+        删除会断链,所以清理保留段后**重建链**: 保留首条作为新 genesis
+        (seq 重排为 1..,prev_hash=0*64,整链重算 entry_hash)。这是合规允许的
+        数据过期清理,调用方负责在审计里记录本次清理。
+        """
+        rows = (
+            await self.session.execute(
+                select(AuditLogModel).order_by(AuditLogModel.seq)
+            )
+        ).scalars().all()
+        keep = [m for m in rows if m.ts >= cutoff]
+        expired = [m for m in rows if m.ts < cutoff]
+        deleted = len(expired)
+
+        if deleted == 0:
+            return 0
+
+        # 删掉过期记录 (必须显式删除,否则留在库里 + 重排 seq 会产生重复序号)
+        for m in expired:
+            await self.session.delete(m)
+
+        if not keep:
+            await self.session.commit()
+            return deleted
+
+        prev = "0" * 64
+        for i, m in enumerate(keep, start=1):
+            m.seq = i
+            m.prev_hash = prev
+            m.entry_hash = self._compute_hash(
+                i, m.case_id, m.action, m.actor, m.detail or {}, m.ts, prev
+            )
+            prev = m.entry_hash
+        await self.session.commit()
+        return deleted
 
     async def list_by_case(self, case_id: str) -> list[dict]:
         stmt = (

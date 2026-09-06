@@ -1,0 +1,8 @@
+{
+  "alert_name": "Jenkins RCE 利用",
+  "severity": "高危",
+  "src_ip": "185.220.101.4",
+  "dst_ip": "10.0.6.30",
+  "rule_id": "NS-ID-9001",
+  "sensor": "nsfocus-ids-rc"
+}

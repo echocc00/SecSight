@@ -51,6 +51,15 @@ async def lifespan(app: FastAPI):
     # 密钥校验 (警告不阻塞启动)
     for w in validate_secrets():
         _log.warning(w)
+    # 剧本配置校验 (L2 双签不静默漏签)
+    import os
+
+    from app.playbooks.loader import load_all, validate_playbooks
+
+    for w in validate_playbooks(
+        load_all(os.environ.get("PLAYBOOKS_DIR", "./playbooks"))
+    ):
+        _log.warning(w)
     # 执行链路能力声明 (让用户知道哪些动作会走 mock)
     from app.core.security import validate_execution_config
 

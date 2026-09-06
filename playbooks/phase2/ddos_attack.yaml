@@ -1,0 +1,49 @@
+# DDoS 攻击 (P0 网络,设计 §4.2)
+id: pb_ddos_attack_v1
+name: DDoS 攻击响应
+category: network
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L3
+description: |
+  大规模流量攻击 (SYN Flood/UDP Flood/CC),影响业务可用性。
+triggers:
+  sigma_rules: [ddos_attack]
+  process_patterns:
+    names: [synflood]
+mitre_mapping:
+  tactics: [TA0040 Impact]
+  techniques: [T1498 Network Denial of Service]
+investigation_steps:
+  - id: I1
+    name: 攻击类型判定
+    tools: [netflow_query, surge_analysis]
+    autonomy: L4
+    output: attack_type
+  - id: I2
+    name: 攻击源分析
+    tools: [netflow_query, abuseipdb_query]
+    autonomy: L4
+    output: sources
+containment_actions:
+  - id: A1_block_ip
+    name: 封禁攻击源
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    tools: [firewall_block]
+  - id: A2_notify
+    name: 通知清洗/扩容
+    action_type: notify
+    autonomy: L4
+    tools: [notify, ddos_mitigation]
+  - id: A3_service_restart
+    name: 重启受影响服务
+    action_type: service_restart
+    autonomy: L4
+    approval: single
+    tools: [orchestrator]
+knowledge_assets:
+  iocs: [attack_sources]
+  ttps: [ddos_ttps]

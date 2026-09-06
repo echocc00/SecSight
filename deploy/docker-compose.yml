@@ -27,6 +27,7 @@ volumes:
   postgres-data:
   qdrant-data:
   opensearch-data:
+  opensearch-isolated-data:
   wazuh-indexer-data:
   wazuh-manager-data:
   shuffle-data:
@@ -299,6 +300,23 @@ services:
       <<: *hc-base
       test: ["CMD", "redis-cli", "ping"]
 
+  opensearch-isolated:
+    image: opensearchproject/opensearch:2.13.0
+    <<: *restart-policy
+    environment:
+      <<: *common-env
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_PASSWORD}
+      OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD}
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes: [opensearch-isolated-data:/usr/share/opensearch/data]
+    networks: [isolation-net]
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 4g }
+
   opencti:
     image: opencti/platform:6.2.0
     <<: *restart-policy
@@ -307,7 +325,9 @@ services:
       OPENCTI_ADMIN_EMAIL: ${OPENCTI_ADMIN_EMAIL}
       OPENCTI_ADMIN_PASSWORD: ${OPENCTI_ADMIN_PASSWORD}
       OPENCTI_ADMIN_TOKEN: ${OPENCTI_ADMIN_TOKEN}
-      ELASTICSEARCH__HOST: opensearch-isolated
+      ELASTICSEARCH__URL: https://opensearch-isolated:9200
+      ELASTICSEARCH__USERNAME: admin
+      ELASTICSEARCH__PASSWORD: ${OPENSEARCH_PASSWORD}
       REDIS__HOSTNAME: redis-opencti
       MINIO__ENDPOINT: minio
       RABBITMQ__HOSTNAME: rabbitmq-opencti
@@ -315,6 +335,7 @@ services:
       redis-opencti: { condition: service_healthy }
       minio: { condition: service_started }
       rabbitmq-opencti: { condition: service_started }
+      opensearch-isolated: { condition: service_started }
     networks: [isolation-net]
     ports: ["8082:8080"]
     healthcheck:

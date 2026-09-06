@@ -40,10 +40,10 @@ class TestHealthAndDiscovery:
         assert r.json()["mock_mode"] is True
 
     @pytest.mark.asyncio
-    async def test_list_playbooks_returns_twelve(self, client):
+    async def test_list_playbooks_returns_twenty_two(self, client):
         r = await client.get("/api/playbooks")
         data = r.json()["data"]
-        assert len(data) == 12
+        assert len(data) == 22  # 12 → 22 剧本补齐
 
     @pytest.mark.asyncio
     async def test_list_alert_types(self, client):

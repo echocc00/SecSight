@@ -1,0 +1,51 @@
+# 合规基线偏差 (P0 等保,设计 §4.4)
+id: pb_compliance_baseline_v1
+name: 等保基线偏差处置
+category: compliance
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L4
+description: |
+  等保 2.0 SCA 基线扫描发现偏差 (口令策略/补丁/加固项)。
+triggers:
+  sigma_rules: [compliance_baseline_deviation, soc_check_findings]
+  process_patterns:
+    names: [cis, sca]
+mitre_mapping:
+  tactics: []
+  techniques: []
+investigation_steps:
+  - id: I1
+    name: 偏差项清单
+    tools: [sca_query]
+    autonomy: L5
+    output: deviations
+  - id: I2
+    name: 风险定级
+    tools: [policy_engine]
+    autonomy: L4
+    output: risk
+containment_actions:
+  - id: A1_query_asset
+    name: 查询资产详情
+    action_type: query_asset
+    autonomy: L4
+    tools: [asset_db]
+  - id: A2_notify
+    name: 通知整改责任人
+    action_type: notify
+    autonomy: L4
+    tools: [notify, harden_ticket]
+  - id: A3_report
+    name: 生成整改报告
+    action_type: report_regulator
+    autonomy: L3
+    approval: single
+    tools: [compliance_report_generator]
+knowledge_assets:
+  iocs: []
+  ttps: []
+compliance:
+  dengbao_level: 3
+  report_required: true

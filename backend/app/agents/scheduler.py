@@ -196,40 +196,97 @@ async def run_proactive_with_record(
 
 
 def start_scheduler() -> None:
-    """启动 APScheduler (lifespan 调用)"""
+    """启动 APScheduler (lifespan 调用)
+
+    Proactive Agent job 受 ENABLE_PROACTIVE_SCHEDULER 控制;
+    审计日志 retention 清理**独立运行** —— 等保 2.0 三级要求保存不少于
+    audit_log_retention_days,到了就该清,不能因 proactive 关闭而不跑。
+    """
     global _scheduler
     if _scheduler is not None:
-        return
-    if not settings.enable_proactive_scheduler:
-        log.info("proactive.scheduler_disabled", note="设 ENABLE_PROACTIVE_SCHEDULER=true 启用")
         return
 
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
 
     _scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
-    for name, default_cron in _DEFAULT_SCHEDULE.items():
-        expr = os.environ.get(
-            f"PROACTIVE_CRON_{name.upper()}", default_cron
-        ).strip()
-        try:
-            _scheduler.add_job(
-                run_proactive_with_record,
-                CronTrigger.from_crontab(expr),
-                args=[name, "scheduled"],
-                id=f"proactive_{name}",
-                max_instances=1,      # 上次未跑完不重入
-                coalesce=True,        # 错过多次只补跑一次
-                misfire_grace_time=3600,
-                replace_existing=True,
-            )
-        except ValueError as e:
-            log.warning("proactive.invalid_cron", agent=name, expr=expr, error=str(e))
+
+    if settings.enable_proactive_scheduler:
+        for name, default_cron in _DEFAULT_SCHEDULE.items():
+            expr = os.environ.get(
+                f"PROACTIVE_CRON_{name.upper()}", default_cron
+            ).strip()
+            try:
+                _scheduler.add_job(
+                    run_proactive_with_record,
+                    CronTrigger.from_crontab(expr),
+                    args=[name, "scheduled"],
+                    id=f"proactive_{name}",
+                    max_instances=1,      # 上次未跑完不重入
+                    coalesce=True,        # 错过多次只补跑一次
+                    misfire_grace_time=3600,
+                    replace_existing=True,
+                )
+            except ValueError as e:
+                log.warning("proactive.invalid_cron", agent=name, expr=expr, error=str(e))
+    else:
+        log.info("proactive.scheduler_disabled", note="设 ENABLE_PROACTIVE_SCHEDULER=true 启用")
+
+    # 审计日志 retention 清理 (凌晨 03:10,独立于 proactive 开关)
+    if settings.audit_log_retention_days > 0 and settings.enable_audit_retention_purge:
+        _scheduler.add_job(
+            _purge_audited_logs,
+            CronTrigger.from_crontab("10 3 * * *"),
+            id="audit_retention_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+            replace_existing=True,
+        )
+
+    if len(_scheduler.get_jobs()) == 0:
+        # 既无 proactive 也无 retention job,不启动后台线程
+        log.info("scheduler.no_jobs_configured", note="调度器未启动")
+        _scheduler = None
+        return
+
     _scheduler.start()
     log.info(
-        "proactive.scheduler_started",
+        "scheduler.started",
         jobs=[j.id for j in _scheduler.get_jobs()],
+        proactive=settings.enable_proactive_scheduler,
+        retention_days=settings.audit_log_retention_days,
     )
+
+
+async def _purge_audited_logs() -> None:
+    """按保留期清理过期审计日志 (崩坏不传播到调度器)"""
+    from datetime import timedelta
+
+    if settings.audit_log_retention_days <= 0:
+        return
+    cutoff = datetime.utcnow() - timedelta(days=settings.audit_log_retention_days)
+    try:
+        from app.db.database import async_session
+        from app.db.repositories import AuditLogRepository
+
+        async with async_session() as session:
+            repo = AuditLogRepository(session)
+            deleted = await repo.purge_before(cutoff)
+            if deleted:
+                # 把清理动作本身也写进审计 (新链起点之后)
+                await repo.record(
+                    action="audit_retention_purged",
+                    actor="scheduler",
+                    detail={
+                        "deleted": deleted,
+                        "retention_days": settings.audit_log_retention_days,
+                        "cutoff": cutoff.isoformat(),
+                    },
+                )
+        log.info("audit.retention_purged", deleted=deleted, cutoff=cutoff.isoformat())
+    except Exception as e:  # noqa: BLE001
+        log.error("audit.retention_purge_failed", error=str(e))
 
 
 async def shutdown_scheduler() -> None:

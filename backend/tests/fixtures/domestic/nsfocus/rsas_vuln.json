@@ -1,0 +1,8 @@
+{
+  "vuln_name": "Apache Log4j2 远程代码执行",
+  "risk": "紧急",
+  "host_ip": "10.0.7.11",
+  "vuln_id": "CNVD-2021-95914",
+  "cve": "CVE-2021-44228",
+  "device": "nsfocus-rsas-01"
+}

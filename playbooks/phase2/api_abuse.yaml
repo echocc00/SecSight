@@ -1,0 +1,49 @@
+# API 异常调用 (P0 应用,设计 §4.3)
+id: pb_api_abuse_v1
+name: API 滥用/异常调用响应
+category: application
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L4
+description: |
+  API 被异常调用 (流量异常/未授权越权/凭证复用)。
+triggers:
+  sigma_rules: [api_abuse, api_unauthorized]
+  indicators:
+    commands: ["GET /api/private"]
+mitre_mapping:
+  tactics: [TA0009 Collection]
+  techniques: [T1078 Valid Accounts, T1110 Brute Force]
+investigation_steps:
+  - id: I1
+    name: 调用行为分析
+    tools: [api_gateway_query]
+    autonomy: L4
+    output: caller
+  - id: I2
+    name: 凭证风险判定
+    tools: [authz_audit_query]
+    autonomy: L4
+    output: token_risk
+containment_actions:
+  - id: A1_freeze_account
+    name: 禁用异常调用凭证
+    action_type: freeze_account
+    autonomy: L2
+    approval: double
+    tools: [iam_revoke]
+  - id: A2_block_ip
+    name: 封禁调用来源
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    tools: [waf_block, firewall_block]
+  - id: A3_notify
+    name: 通知 API 负责人
+    action_type: notify
+    autonomy: L4
+    tools: [notify]
+knowledge_assets:
+  iocs: [api_abusers]
+  ttps: [api_ttps]

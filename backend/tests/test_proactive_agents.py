@@ -187,12 +187,37 @@ class TestProactiveCaseCreation:
 
 
 class TestSchedulerLifecycle:
-    def test_scheduler_disabled_by_default(self, monkeypatch):
-        from app.agents.scheduler import scheduler_status, start_scheduler
+    def test_no_jobs_disabled_scheduler(self, monkeypatch):
+        """proactive 关 + retention 清关 → 调度器不启动"""
+        from app.agents import scheduler as sched
+        from app.core.config import settings
 
-        start_scheduler()  # enable_proactive_scheduler 默认 False
-        st = scheduler_status()
+        monkeypatch.setattr(sched, "_scheduler", None)
+        monkeypatch.setattr(settings, "enable_proactive_scheduler", False)
+        monkeypatch.setattr(settings, "enable_audit_retention_purge", False)
+        sched.start_scheduler()
+        st = sched.scheduler_status()
         assert st["running"] is False
+        assert st["jobs"] == []
+
+    @pytest.mark.asyncio
+    async def test_retention_job_runs_without_proactive(self, monkeypatch):
+        """审计 retention 清理独立于 proactive 开关 —— 等保要求必须跑"""
+        from app.agents import scheduler as sched
+        from app.core.config import settings
+
+        monkeypatch.setattr(sched, "_scheduler", None)
+        monkeypatch.setattr(settings, "enable_proactive_scheduler", False)
+        monkeypatch.setattr(settings, "enable_audit_retention_purge", True)
+        monkeypatch.setattr(settings, "audit_log_retention_days", 180)
+        sched.start_scheduler()
+        st = sched.scheduler_status()
+        assert st["running"] is True
+        ids = {j["id"] for j in st["jobs"]}
+        assert "audit_retention_purge" in ids
+        # proactive 关时不注册 proactive job
+        assert not any(j["agent"] for j in st["jobs"])
+        await sched.shutdown_scheduler()
 
     @pytest.mark.asyncio
     async def test_scheduler_starts_when_enabled(self, monkeypatch):
@@ -205,8 +230,10 @@ class TestSchedulerLifecycle:
         sched.start_scheduler()
         st = sched.scheduler_status()
         assert st["running"] is True
-        assert len(st["jobs"]) == 4
-        agents = {j["agent"] for j in st["jobs"]}
+        # 4 proactive + 1 audit retention job
+        job_ids = {j["id"] for j in st["jobs"]}
+        assert "audit_retention_purge" in job_ids
+        agents = {j["agent"] for j in st["jobs"] if j["agent"]}
         assert agents == {
             "threat_hunting",
             "vuln_scan",

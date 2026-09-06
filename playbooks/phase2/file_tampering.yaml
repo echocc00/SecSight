@@ -1,0 +1,56 @@
+# 敏感文件被篡改 (P0,设计 §4.1)
+id: pb_file_tampering_v1
+name: 敏感文件篡改响应
+category: host
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L3
+description: |
+  关键配置文件/二进制被篡改 (FIM 命中),可能为持久化或破坏。
+triggers:
+  sigma_rules: [file_tampering]
+  wazuh_rules: ["550"]
+  process_patterns:
+    names: [tamper]
+mitre_mapping:
+  tactics: [TA0005 Defense Evasion]
+  techniques: [T1561 Disk Wipe, T1547 Boot or Logon Autostart]
+investigation_steps:
+  - id: I1
+    name: 篡改范围确定
+    tools: [fim_query, auditd_query]
+    autonomy: L4
+    output: tampered_files
+  - id: I2
+    name: 来源溯源
+    tools: [sysmon_process, opencti_query]
+    autonomy: L4
+    output: source
+containment_actions:
+  - id: A1_quarantine_file
+    name: 隔离篡改文件
+    action_type: quarantine_file
+    autonomy: L3
+    approval: double
+    tools: [edr_quarantine]
+  - id: A2_isolate_host
+    name: 隔离主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response]
+  - id: A3_rollback_file
+    name: 回滚到基线版本
+    action_type: rollback_file
+    autonomy: L3
+    approval: double
+    tools: [config_backup_restore]
+  - id: A4_notify
+    name: 通知负责人
+    action_type: notify
+    autonomy: L4
+    tools: [notify]
+knowledge_assets:
+  iocs: [tampered_paths]
+  ttps: [file_integrity_ttps]

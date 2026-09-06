@@ -18,7 +18,7 @@ from app.playbooks.engine import PlaybookEngine, engine
 class TestPlaybookLoading:
     def test_loads_all_phase1_and_phase2_playbooks(self):
         # Phase1: 6 P0 + Phase2: 6 P1 = 12
-        assert len(engine.playbooks) == 12
+        assert len(engine.playbooks) == 22  # 12 → 22 剧本补齐
 
     def test_get_by_id_returns_matching_playbook(self):
         pb = engine.get_by_id("pb_cryptominer_v1")

@@ -1,0 +1,48 @@
+# 备份失败/异常 (P0 数据,设计 §4.4)
+id: pb_backup_failure_v1
+name: 备份失败应急处置
+category: data
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L4
+description: |
+  备份作业失败/备份数据异常 (存储满/加密勒索前兆)。
+triggers:
+  sigma_rules: [backup_failure, backup_abnormal]
+  process_patterns:
+    names: [bacula, backup]
+mitre_mapping:
+  tactics: [TA0040 Impact]
+  techniques: [T1486 Data Encrypted for Impact]
+investigation_steps:
+  - id: I1
+    name: 备份状态核查
+    tools: [backup_status_query]
+    autonomy: L4
+    output: backup_gap
+  - id: I2
+    name: 失败原因
+    tools: [backup_log_query]
+    autonomy: L4
+    output: reason
+containment_actions:
+  - id: A1_service_restart
+    name: 重启备份作业
+    action_type: service_restart
+    autonomy: L4
+    approval: single
+    tools: [backup_orchestrator]
+  - id: A2_notify
+    name: 通知备份负责人
+    action_type: notify
+    autonomy: L4
+    tools: [notify, backup_ticket]
+  - id: A3_verify
+    name: 校验最近备份可用
+    action_type: notify
+    autonomy: L5
+    tools: [restore_drill]
+knowledge_assets:
+  iocs: []
+  ttps: [backup_ttps]

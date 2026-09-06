@@ -1,0 +1,56 @@
+# 数据库异常查询 (P0 数据,设计 §4.4)
+id: pb_database_anomaly_v1
+name: 数据库异常行为响应
+category: database
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+description: |
+  数据库异常查询 (全表导出/拖库/慢查询风暴/未授权访问)。
+triggers:
+  sigma_rules: [database_dump, database_anomaly]
+  wazuh_rules: ["84448"]
+  process_patterns:
+    names: [mysqldump]
+mitre_mapping:
+  tactics: [TA0010 Exfiltration]
+  techniques: [T1020 Automated Exfiltration, T1213 Data from Information Repositories]
+investigation_steps:
+  - id: I1
+    name: 异常查询确认
+    tools: [db_audit_query, sql_plan_analysis]
+    autonomy: L4
+    output: query_pattern
+  - id: I2
+    name: 来源定位
+    tools: [db_login_query, sysmon_network]
+    autonomy: L4
+    output: source
+containment_actions:
+  - id: A1_freeze_account
+    name: 冻结可疑 DB 账号
+    action_type: freeze_account
+    autonomy: L2
+    approval: double
+    tools: [db_revoke, ldap_lock]
+  - id: A2_block_ip
+    name: 封禁来源 IP
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    tools: [firewall_block]
+  - id: A3_isolate_host
+    name: 隔离业务主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response]
+  - id: A4_notify
+    name: 通知 DBA
+    action_type: notify
+    autonomy: L4
+    tools: [notify]
+knowledge_assets:
+  iocs: [query_sources]
+  ttps: [db_abuse_ttps]

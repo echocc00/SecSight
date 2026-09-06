@@ -173,8 +173,8 @@ export const api = {
   getReportHtml: (caseId: string) =>
     client.get<string>(`/compliance/${caseId}/report`, { responseType: "text" }).then((r) => r.data),
 
-  // 健康与指标
-  health: () => client.get("/health").then((r) => r.data),
+  // 健康与指标 — /health 挂根路径,不走 /api 前缀
+  health: () => axios.get("/health").then((r) => r.data),
 
   // Agents
   listAgents: () =>

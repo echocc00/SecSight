@@ -1,6 +1,7 @@
 """LangGraph 编排节点实现 (各节点真实逻辑,用 mock 服务)"""
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Any
@@ -173,11 +174,17 @@ def build_action_from_config(
 
     target = 剧本静态参数 + 从告警解析的处置目标。告警解析结果优先,
     因为剧本 parameters 是所有 Case 共用的策略,不含具体资产。
+
+    高危动作 (隔离/封禁) 无论 YAML 是否写了 approval: double,都强制三签 ——
+    YAML 漏写会静默退化成单签,这是安全上不可接受的默认值。
     """
+    from app.approvals.service import CRITICAL_ACTIONS
+
     autonomy = AutonomyLevel(cfg.autonomy)
     action_type = _infer_action_type(cfg.id, cfg.action_type)
     target = dict(cfg.parameters or {})
     target.update(resolve_action_target(action_type, alerts or []))
+    is_critical_l2 = autonomy == AutonomyLevel.L2 and action_type.value in CRITICAL_ACTIONS
     return Action(
         action_id=str(uuid4()),
         action_type=action_type,
@@ -185,7 +192,8 @@ def build_action_from_config(
         autonomy_level=autonomy,
         risk=Severity(cfg.risk),
         approval_required=autonomy == AutonomyLevel.L2,
-        requires_double_sign=cfg.approval == "double",
+        # 高危 L2 一律三签;其余 L2 按剧本显式声明 (缺省为单签)
+        requires_double_sign=is_critical_l2 or cfg.approval == "double",
         timeout_seconds=300,
         rollback_action_id=cfg.rollback,
         playbook_id=playbook_id,
@@ -524,8 +532,20 @@ async def execute_node(state: dict) -> dict:
                 started_at=datetime.utcnow(),
             )
             result = await executor.execute(action, case_id=case_id)
-            step.status = "success" if result.get("success") else "failed"
-            step.finished_at = datetime.utcnow()
+            shuffle_state = str(
+                (result.get("shuffle_response") or {}).get("status", "")
+            ).lower()
+            if result.get("executor") == "shuffle" and shuffle_state in ("executing", "queued"):
+                # Shuffle 异步执行: 触发成功但仍在跑,不假装 success
+                step.status = "executing"
+                task_id = result.get("task_id") or result.get("shuffle_execution_id")
+                if task_id:
+                    asyncio.get_running_loop().create_task(
+                        _poll_shuffle_to_terminal(case_id, action.action_id, task_id)
+                    )
+            else:
+                step.status = "success" if result.get("success") else "failed"
+                step.finished_at = datetime.utcnow()
             # 时间线要能自证是真执行还是 mock: 动作类型/目标/执行器都留在记录里
             step.result = {
                 **result,
@@ -533,7 +553,7 @@ async def execute_node(state: dict) -> dict:
                 "target": action.target,
                 "autonomy_level": action.autonomy_level.value,
             }
-            if not result.get("success"):
+            if result.get("executor") != "shuffle" and not result.get("success"):
                 step.error = result.get("error") or result.get("message")
             await repo.append_execution(case_id, step)
 
@@ -549,13 +569,65 @@ async def execute_node(state: dict) -> dict:
                 },
             )
 
-            # 指标埋点
+            # 指标埋点 (执行中不计数,等轮询终态?)
             record_execution(action.action_type.value, success=step.status == "success")
 
         await repo.update_status(case_id, CaseStatus.contained)
 
     log.info("node.execute", case_id=case_id)
     return state
+
+
+async def _poll_shuffle_to_terminal(case_id: str, action_id: str, execution_id: str) -> None:
+    """后台轮询真实 Shuffle 执行状态,终态回写 execution_log
+
+    超时或查询失败: 保留 executing,不假装成功 —— 时间线能看出"还在跑"。
+    """
+    from app.core.config import settings
+    from app.execution.shuffle import ShuffleExecutor
+
+    poller = ShuffleExecutor(
+        base_url=settings.shuffle_base_url,
+        api_key=settings.shuffle_api_key,
+        workflow_map={},
+        timeout=settings.llm_timeout_seconds,
+    )
+    outcome = await poller.poll_to_terminal(execution_id)
+    status = outcome.get("status")
+    if status not in ("success", "failed"):
+        log.info("shuffle.poll_timeout", case_id=case_id, action_id=action_id, execution_id=execution_id)
+        return
+
+    async with async_session() as session:
+        repo = CaseRepository(session)
+        await repo.update_execution_status(
+            case_id,
+            action_id,
+            status,
+            {
+                "executor": "shuffle",
+                "task_id": execution_id,
+                "execute_status": status,
+                "shuffle_status": outcome.get("shuffle_status"),
+            },
+        )
+
+    from app.realtime.broadcast import broadcaster
+
+    await broadcaster.publish(
+        "execution_step",
+        {
+            "case_id": case_id,
+            "action_id": action_id,
+            "status": status,
+            "action_type": "shuffle",
+            "executor": "shuffle",
+            "skipped": False,
+        },
+    )
+    log.info(
+        "shuffle.poll_to_terminal", case_id=case_id, action_id=action_id, status=status
+    )
 
 
 async def escalate_node(state: dict) -> dict:

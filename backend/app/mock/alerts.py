@@ -317,6 +317,146 @@ def phishing_email_alert(
     )
 
 
+def file_tampering_alert(
+    hostname: str = "web-prod-01", src_ip: str = "10.0.1.15", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="sysmon", rule_id="550",
+        rule_level=8, severity=Severity.high, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "file_tampering", "process_name": "systemd-modules", "file_path": "/etc/cron.d/tamper", "parent_process": "bash"},
+        mitre_tactics=["TA0005 Defense Evasion"],
+        mitre_techniques=["T1561 Disk Wipe"],
+        message="Critical config file /etc/cron.d/tamper modified by unexpected process",
+    )
+
+
+def ddos_attack_alert(
+    hostname: str = "edge-01", src_ip: str = "198.51.100.44", dst_ip: str = "203.0.113.10", pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="suricata", rule_id="ET DOS SYN Flood",
+        rule_level=10, severity=Severity.critical, src_ip=src_ip, dst_ip=dst_ip,
+        asset=AssetRef(host_id="edge-fw", hostname="edge-fw", ips=[dst_ip]),
+        raw={"sigma_id": "ddos_attack", "proto": "tcp", "pps": 200000, "synflood": True},
+        mitre_tactics=["TA0040 Impact"],
+        mitre_techniques=["T1498 Network Denial of Service"],
+        message="SYN Flood 200k pps toward 203.0.113.10",
+    )
+
+
+def waf_trigger_alert(
+    hostname: str = "web-prod-01", src_ip: str = "45.10.0.77", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="wazuh", rule_id="933100",
+        rule_level=7, severity=Severity.high, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "waf_trigger", "waf_category": "sqli", "uri": "/login?user=1%27", "payload": "1 OR 1=1"},
+        mitre_tactics=["TA0001 Initial Access"],
+        mitre_techniques=["T1190 Exploit Public-Facing Application"],
+        message="WAF blocked SQLi attempt against /login",
+    )
+
+
+def webshell_upload_alert(
+    hostname: str = "web-prod-01", src_ip: str = "45.10.0.88", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="qianxin", rule_id="9222",
+        rule_level=10, severity=Severity.critical, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "webshell_upload", "webshell_path": "/var/www/html/shell.jsp", "cmd": "whoami", "upload_method": "POST"},
+        mitre_tactics=["TA0003 Persistence"],
+        mitre_techniques=["T1505.003 Web Shell"],
+        message="Webshell shell.jsp uploaded to /var/www/html with cmd execution",
+    )
+
+
+def dns_tunneling_alert(
+    hostname: str = "dc-01", src_ip: str = "10.0.1.200", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="suricata", rule_id="ET POLICY DNS tunneling",
+        rule_level=9, severity=Severity.high, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "dns_tunneling", "domain": "tunnel.data-exfil.xyz", "query_type": "TXT", "bytes": 4096},
+        mitre_tactics=["TA0011 Command and Control"],
+        mitre_techniques=["T1071.004 DNS"],
+        message="DNS tunnel suspected: large TXT queries to tunnel.data-exfil.xyz",
+    )
+
+
+def database_anomaly_alert(
+    hostname: str = "db-prod-01", src_ip: str = "10.0.5.9", dst_ip: str = "10.0.5.1", pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="sysmon", rule_id="84448",
+        rule_level=10, severity=Severity.critical, src_ip=src_ip, dst_ip=dst_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[dst_ip]),
+        raw={"sigma_id": "database_dump", "query": "SELECT * FROM user_credit", "rows": 500000, "account": "app_ro"},
+        mitre_tactics=["TA0010 Exfiltration"],
+        mitre_techniques=["T1020 Automated Exfiltration"],
+        message="DB full-table export SELECT * FROM user_credit by app_ro",
+    )
+
+
+def api_abuse_alert(
+    hostname: str = "gateway-01", src_ip: str = "203.0.113.77", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="opensearch", rule_id="api_403_burst",
+        rule_level=8, severity=Severity.high, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "api_abuse", "endpoint": "/api/private/users", "status": 403, "burst": 800, "token": "jwt-rotated"},
+        mitre_tactics=["TA0009 Collection"],
+        mitre_techniques=["T1078 Valid Accounts"],
+        message="800 403s on /api/private/users from single caller",
+    )
+
+
+def unauthorized_data_access_alert(
+    hostname: str = "app-01", src_ip: str = "10.0.8.33", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="dlp", rule_id="DLP PII export",
+        rule_level=9, severity=Severity.high, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "unauthorized_sensitive_access", "dataset": "customer_pii", "action": "export", "account": "viewer_jane"},
+        mitre_tactics=["TA0009 Collection"],
+        mitre_techniques=["T1213 Data from Information Repositories"],
+        message="viewer_jane exported customer_pii without authorization",
+    )
+
+
+def backup_failure_alert(
+    hostname: str = "backup-01", src_ip: str = "10.0.9.1", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="bacula", rule_id="Backup Job Error",
+        rule_level=5, severity=Severity.high, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "backup_failure", "job": "nightly-full", "error": "disk full", "last_success": "3d ago"},
+        mitre_tactics=["TA0040 Impact"],
+        mitre_techniques=["T1486 Data Encrypted for Impact"],
+        message="nightly-full backup failed: disk full, last success 3d ago",
+    )
+
+
+def compliance_baseline_alert(
+    hostname: str = "web-prod-01", src_ip: str = "10.0.1.15", dst_ip: str | None = None, pid: int = 28371,
+) -> Alert:
+    return Alert(
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="wazuh_sca", rule_id="CIS-1.1.1",
+        rule_level=6, severity=Severity.medium, src_ip=src_ip,
+        asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
+        raw={"sigma_id": "compliance_baseline_deviation", "check": "CIS 1.1.1", "policy": "cis_linux", "status": "failed"},
+        mitre_tactics=[],
+        mitre_techniques=[],
+        message="CIS baseline check 1.1.1 failed: password policy not enforced",
+    )
+
+
 # 预设告警类型注册表
 MOCK_ALERTS = {
     "xmrig_process": xmrig_process_alert,
@@ -332,4 +472,14 @@ MOCK_ALERTS = {
     "privilege_escalation": privilege_escalation_alert,
     "c2_communication": c2_communication_alert,
     "phishing_email": phishing_email_alert,
+    "file_tampering": file_tampering_alert,
+    "ddos_attack": ddos_attack_alert,
+    "waf_trigger": waf_trigger_alert,
+    "webshell_upload": webshell_upload_alert,
+    "dns_tunneling": dns_tunneling_alert,
+    "database_anomaly": database_anomaly_alert,
+    "api_abuse": api_abuse_alert,
+    "unauthorized_data_access": unauthorized_data_access_alert,
+    "backup_failure": backup_failure_alert,
+    "compliance_baseline": compliance_baseline_alert,
 }

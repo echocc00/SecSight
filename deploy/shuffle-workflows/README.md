@@ -67,6 +67,19 @@ curl -s localhost:8000/health | jq .execution
 
 注入告警后查 Case 的 `execution_log`,真实执行会有 Shuffle 的 `task_id`,降级 mock 会带 `fallback_reason`。
 
+## 异步执行状态回查
+
+Shuffle `POST /workflows/{id}/execute` 是异步的 —— 返回 `status: executing/queued` 表示**已触发但仍在跑**。
+
+SecSight 对真实 Shuffle 执行不假装成功:
+
+1. `execute_node` 触发后,该 step 在 `execution_log` 里标记 **`executing`**(不是 `success`)
+2. 后台任务轮询 `GET /api/v1/executions/{execution_id}`,间隔 2s,最多 10 次
+3. 轮询到终态 (`success`/`completed`/`finished` → `success`;`failed`/`error`/`timeout` → `failed`)后,`update_execution_status` 回写该 step,并推送 WS `execution_step` 事件
+4. 超时/查询失败: **保留 `executing`**,不伪装成功 —— 时间线和 `/api/cases/{id}` 能看到"还在跑"
+
+因此 Case 时间线会如实反映: `executing`(已在 Shuffle 跑)→ `success`/`failed`(轮询到终态)。
+
 ## Workflow 契约
 
 SecSight 调用:

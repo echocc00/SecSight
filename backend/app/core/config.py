@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     audit_log_retention_days: int = Field(
         default=180, alias="AUDIT_LOG_RETENTION_DAYS"
     )
+    # 审计日志保留期到期自动清理 (等保 2.0 三级: 保存不少于 180 天)
+    enable_audit_retention_purge: bool = Field(
+        default=True, alias="ENABLE_AUDIT_RETENTION_PURGE"
+    )
 
     # 认证令牌
     # access 短时效 + refresh 长时效: access 泄露的窗口从 8h 收到 30min,

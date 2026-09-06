@@ -1,0 +1,63 @@
+# Webshell 上传/利用 (P0 应用,设计 §4.3)
+id: pb_webshell_v1
+name: Webshell 处置
+category: application
+priority: P0
+phase: 2
+version: "1.0"
+autonomy_level_default: L2
+description: |
+  服务器被上传/植入 Webshell,攻击者可能已具备执行能力。
+triggers:
+  sigma_rules: [webshell_upload, webshell_access]
+  wazuh_rules: ["9222"]
+  process_patterns:
+    names: [webshell]
+mitre_mapping:
+  tactics: [TA0003 Persistence]
+  techniques: [T1505.003 Web Shell]
+investigation_steps:
+  - id: I1
+    name: 定位 Webshell 文件
+    tools: [fim_query, web_dir_scan]
+    autonomy: L4
+    output: webshell_path
+  - id: I2
+    name: 访问记录分析
+    tools: [nginx_access_query, sysmon_process]
+    autonomy: L4
+    output: accessor
+containment_actions:
+  - id: A1_quarantine_file
+    name: 隔离 Webshell 文件
+    action_type: quarantine_file
+    autonomy: L2
+    approval: double
+    tools: [edr_quarantine, web_dir_cleanup]
+  - id: A2_kill_process
+    name: 终止恶意进程
+    action_type: kill_process
+    autonomy: L2
+    approval: double
+    tools: [edr_kill]
+  - id: A3_block_ip
+    name: 封禁访问源
+    action_type: block_ip
+    autonomy: L2
+    approval: double
+    tools: [waf_block, firewall_block]
+  - id: A4_isolate_host
+    name: 隔离主机
+    action_type: isolate_host
+    autonomy: L2
+    approval: double
+    tools: [wazuh_active_response]
+  - id: A5_forensic
+    name: 取证
+    action_type: forensic_capture
+    autonomy: L3
+    approval: single
+    tools: [memory_capture, artifact_collect]
+knowledge_assets:
+  iocs: [webshell_hashes, access_ips]
+  ttps: [webshell_ttps]

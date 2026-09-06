@@ -5,6 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend,
 } from "recharts";
 import { api } from "../api/client";
+import { onEvent } from "../lib/ws";
 
 const STATUS_COLORS: Record<string, string> = {
   open: "#bfbfbf",
@@ -45,8 +46,19 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 15000); // 15s 自动刷新
-    return () => clearInterval(timer);
+    // WS 实时推送驱动刷新 (新告警/审批/执行/闭环即时可见),15s 轮询兜底 (WS 断线)
+    const cleanups = [
+      onEvent("case_created", () => load()),
+      onEvent("alert_deduped", () => load()),
+      onEvent("approval_submitted", () => load()),
+      onEvent("execution_step", () => load()),
+      onEvent("case_resolved", () => load()),
+    ];
+    const timer = setInterval(load, 15000); // 15s 自动刷新 (兜底)
+    return () => {
+      cleanups.forEach((unsub) => unsub());
+      clearInterval(timer);
+    };
   }, []);
 
   const pendingCount = cases.filter((c) => c.status === "pending_approval").length;
