@@ -136,6 +136,7 @@ class ShuffleExecutor(ActionExecutor):
         )
         return {
             "success": success,
+            "executor": "shuffle",
             "task_id": execution_id,
             "message": f"Shuffle workflow {workflow_id} triggered for {action_type}",
             "shuffle_execution_id": execution_id,

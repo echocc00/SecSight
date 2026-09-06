@@ -162,12 +162,14 @@ docker compose up -d shuffle opencti dfir-iris
 docker compose up -d secsight-backend secsight-frontend
 
 # 4. 访问
-# SecSight Dashboard:  http://localhost:8080
-# Wazuh Dashboard:     http://localhost:5601
-# OpenSearch Dashboards: http://localhost:5602
-# Shuffle:             http://localhost:3001
-# OpenCTI:             http://localhost:8080
-# DFIR-IRIS:           http://localhost:8000
+- SecSight Dashboard: http://localhost:8080
+- Wazuh Dashboard:    http://localhost:5601
+- OpenSearch:         http://localhost:9200
+- Shuffle:            http://localhost:3001
+- OpenCTI:            http://localhost:8082   (隔离网段,仅后端调用)
+- DFIR-IRIS:          http://localhost:8001
+- Prometheus:         http://localhost:9090
+- Grafana:            http://localhost:3000
 ```
 
 > 详细部署见 [docs/04-implementation-phase1.md](docs/04-implementation-phase1.md)。
@@ -179,40 +181,35 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚀 v0.5.1 — License 合规与商业授权: Wazuh webhook + Shuffle SOAR 真实执行。12 剧本 + 5 真实组件 + 生产化加固。234 测试,覆盖率 87.8%。
+🚀 v0.6.0 — 全栈加固 + 实时化: 582 测试,覆盖率 87.1%。Alembic 迁移体系 / 7 角色 LangGraph / 审计链 / 限流 / 告警聚合 / Refresh Token / WebSocket 实时推送 / 真实 BGE-m3 Embedding / OpenCTI 归因。
 
-**v0.4 新增 (真实部署链路)**:
-- Wazuh webhook 接收器: 实时接收 Wazuh 推送告警 (替代 mock 注入),TTTR 更低
-- 真实 Shuffle SOAR 执行器: REST API 触发 Workflow,故障降级 mock
-- 部署验证脚本 + Wazuh/Shuffle 配置文档
-- docker-compose 7 组件全栈 + 健康检查 + 资源限制
+**v0.6 新增 (W1-W3 加固)**:
+- **迁移与一致性**: Alembic async 迁移 + 生产启动 head 校验 (deploy/migrate.sh);依赖锁定 requirements{,-dev,-pg,-embedding}.lock + CI 校验 lock 不漂移
+- **Agent 织入**: DFIR/IRLead/Compliance/SOCManager 进 workflow;P0 事件高危动作强制 L2 三签;Proactive Agent APScheduler 自动调度,高危发现自动建 Case
+- **告警风暴抑制**: 时间窗聚合 (规则+主机+源IP 窗口内并入现有 Case),已闭环 Case 不吸收,deduped 计数入 /metrics
+- **认证升级**: JWT access 30min + refresh 7d 轮换/吊销;生产种子密码随机生成;前端 axios 自动续期 + 并发 401 单飞
+- **审计链**: 审计日志 SHA256 hash 链 (seq/prev/entry),/api/audit/verify 断链定位,合规报告内嵌完整性校验
+- **限流**: login 5 / inject 30 / webhook 600 / search 60 / approval 120 每分钟,Redis 共享计数器 (多副本不放大)
+- **实时推送**: WebSocket /api/ws/events —— 新告警/审批/执行步骤/案例闭环推送到前端审批面板与 Case 时间线
+- **真实 Embedding**: TFIDF / BGE-m3 / OpenAI 兼容三 provider;换 provider 自动切集合 (维度隔离) + reindex 脚本
+- **OpenCTI 归因**: GraphQL 搜 IoC + APT/恶意软件归因 (第 3 情报源,纯 HTTP 不 import pycti)
+- **前端**: 独立审批面板 /approvals (跨 Case 待办+双签进度+严重性筛选)、执行时间线 (成功/失败/跳过+执行器+目标)、合规报告入口 /compliance (报告生成+审计链自检)
+- **处置目标解析**: 动作 target 从告警解析真实资产 (host/ip/pid/domain),不再空对象 —— 修复审批人看不到"要隔离谁"、Shuffle 拿空 target 的核心问题
 
-**Phase2 新增**:
-- 生产化加固: JWT 认证 + 4 角色 (admin/analyst/approver/viewer) + 权限矩阵
-- 监控: Prometheus 指标 (/metrics) + Grafana SOC KPI 面板 + 扩展健康检查
-- 安全: slowapi 速率限制 + PII 脱敏 + CORS 收紧 + 密钥校验
-- 合规: 等保 2.0 三级报告自动生成 (HTML/Markdown,Jinja2 模板)
-- +6 P1 剧本: Web攻击/数据外泄/横向移动/提权/C2/钓鱼
-- docker-compose 全栈生产化: 7 组件 + 健康检查 + 资源限制 + 网络隔离
-- CI: license 隔离检查 + 测试覆盖率门槛 80%
+**v0.5 新增 (Wazuh + Shuffle 真实链路)**:
+- Wazuh webhook 接收器 + 真实 Shuffle SOAR 执行器 (REST API,故障降级 mock)
+- docker-compose 7 组件全栈 + 健康检查 + 资源限制 + 网络隔离
+- CI: license 隔离 + 依赖 license 扫描 (AGPL/GPL/SSPL 阻断,放行 LGPL/MPL) + SBOM + Trivy
 
 **LLM 接入** (mock_mode=false):
 - 真 LLM 主: MiniMax (OpenAI 兼容直连),研判由真实推理生成
 - 故障降级: LLM 调用/解析失败自动回退 mock,闭环不断
-- 健壮解析: schema 驱动枚举约束 + 归一化器 (severity 大小写/true_positive 布尔/kill_chain_phase list/置信度/截断 JSON)
 - 组件解耦: LLM/检索/执行各自独立开关 (SECSIGHT_MOCK_MODE / ENABLE_QDRANT / ENABLE_SHUFFLE)
 
 **威胁情报接入** (ENABLE_THREAT_INTEL=true):
-- 免费源: AbuseIPDB (IP 信誉) + OTX (IP/域名/hash/url,无 key 也可用)
-- 多源聚合: 并行查询 + 置信度合成 (多源命中 0.7+,单源 0.4)
-- IoC 自动提取: 从告警提取 IP/域名/hash,内网 IP/API 域名过滤
-- 故障降级: 真实 API 失败自动回退 mock
-- workflow 接入: enrich_ioc 节点 (retrieve→enrich→analyze),情报进 LLM prompt
-
-**真实组件接入** (各自独立开关):
-- Qdrant RAG (ENABLE_QDRANT): numpy TF-IDF embedding + HNSW 向量检索,知识入库脚本
-- Shuffle SOAR (ENABLE_SHUFFLE): REST API 触发 Workflow,AGPL 隔离,action_type→workflow_id 映射
-- Wazuh 告警 (POST /api/alerts/wazuh/poll): API 查 /security/events 或读 alerts.json,归一化为 Alert→Case
+- 免费源: AbuseIPDB (IP) + OTX (全类型) + OpenCTI (本地 STIX,APT 归因)
+- 多源并行 + 置信度合成;IoC 自动提取;真实 API 失败回退 mock
+- enrich_ioc 节点接入 workflow,情报进 LLM prompt
 
 **已验证剧本** (mock 端到端):
 | 剧本 | MITRE | L2 审批 | 自动闭环 |

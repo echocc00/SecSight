@@ -7,7 +7,12 @@ from typing import Any
 from uuid import uuid4
 
 from app.db.database import async_session
-from app.db.repositories import AuditLogRepository, CaseRepository, EvidencePackRepository
+from app.db.repositories import (
+    ApprovalRecordRepository,
+    AuditLogRepository,
+    CaseRepository,
+    EvidencePackRepository,
+)
 from app.llm_gateway.mock import get_llm
 from app.models.schemas import (
     Action,
@@ -81,15 +86,102 @@ def _infer_action_type(action_id: str, explicit: str = "") -> ActionType:
     return ActionType.notify
 
 
+# 各动作类型需要的目标字段。剧本 parameters 只有静态策略 (mode/protocols),
+# 真正要处置的主机/IP/进程必须从告警里解析,否则执行器拿到空 target,
+# 真实 Shuffle workflow 无从下手,审批人也看不出会影响谁。
+_TARGET_FIELDS: dict[ActionType, tuple[str, ...]] = {
+    ActionType.isolate_host: ("host_id", "hostname", "host_ip"),
+    ActionType.kill_process: ("host_id", "hostname", "pid", "process_name"),
+    ActionType.quarantine_file: ("host_id", "hostname", "file_path", "file_hash"),
+    ActionType.block_ip: ("ip",),
+    ActionType.block_domain: ("domain",),
+    ActionType.freeze_account: ("account", "hostname"),
+    ActionType.service_restart: ("host_id", "hostname", "service"),
+    ActionType.rollback_file: ("host_id", "hostname", "file_path"),
+    ActionType.forensic_capture: ("host_id", "hostname"),
+}
+
+
+def _resolve_domain(alert: dict, raw: dict) -> str | None:
+    """域名: 优先结构化字段,没有就从告警文本提取
+
+    很多采集器不给独立 domain 字段 (矿池域名藏在 cmdline / dns_query 文本里),
+    没有兜底提取会让 block_domain 拿到空 target。
+    """
+    for key in ("domain", "dns_query", "pool_domain", "hostname_queried"):
+        value = raw.get(key)
+        if value:
+            return str(value)
+
+    from app.threat_intel.service import extract_iocs
+
+    text = " ".join(
+        str(v)
+        for v in (raw.get("cmdline"), raw.get("url"), alert.get("message"))
+        if v
+    )
+    if not text:
+        return None
+    for ioc_type, value in extract_iocs({"text": text}):
+        if ioc_type == "domain":
+            return value
+    return None
+
+
+def resolve_action_target(action_type: ActionType, alerts: list[dict]) -> dict:
+    """从告警解析处置目标
+
+    多告警时用首个 (同 Case 内告警已按 agg_key 聚合,主机/IP 相同)。
+    只填该动作真正需要的字段 —— block_ip 不该带 hostname,否则 workflow
+    容易误用错字段。
+    """
+    fields = _TARGET_FIELDS.get(action_type)
+    if not fields or not alerts:
+        return {}
+
+    alert = alerts[0]
+    asset = alert.get("asset") or {}
+    raw = alert.get("raw") or {}
+    asset_ips = asset.get("ips") or []
+
+    candidates: dict[str, Any] = {
+        "host_id": asset.get("host_id"),
+        "hostname": asset.get("hostname"),
+        "host_ip": asset_ips[0] if asset_ips else None,
+        # block_ip 封的是攻击者侧: 外部源 IP 优先,内网横向时退回目标 IP
+        "ip": alert.get("src_ip") or alert.get("dst_ip"),
+        "domain": _resolve_domain(alert, raw) if "domain" in fields else None,
+        "pid": raw.get("pid"),
+        "process_name": raw.get("process_name") or raw.get("process"),
+        "file_path": raw.get("file_path")
+        or raw.get("path")
+        or raw.get("parent_process"),
+        "file_hash": raw.get("file_hash") or raw.get("sha256") or raw.get("md5"),
+        "account": alert.get("user") or raw.get("username") or raw.get("srcuser"),
+        "service": raw.get("service") or raw.get("service_name"),
+    }
+
+    return {k: candidates[k] for k in fields if candidates.get(k) not in (None, "")}
+
+
 def build_action_from_config(
-    cfg: ContainmentActionConfig, playbook_id: str
+    cfg: ContainmentActionConfig,
+    playbook_id: str,
+    alerts: list[dict] | None = None,
 ) -> Action:
-    """剧本 Action 配置 → Action 域对象"""
+    """剧本 Action 配置 → Action 域对象
+
+    target = 剧本静态参数 + 从告警解析的处置目标。告警解析结果优先,
+    因为剧本 parameters 是所有 Case 共用的策略,不含具体资产。
+    """
     autonomy = AutonomyLevel(cfg.autonomy)
+    action_type = _infer_action_type(cfg.id, cfg.action_type)
+    target = dict(cfg.parameters or {})
+    target.update(resolve_action_target(action_type, alerts or []))
     return Action(
         action_id=str(uuid4()),
-        action_type=_infer_action_type(cfg.id, cfg.action_type),
-        target=cfg.parameters,
+        action_type=action_type,
+        target=target,
         autonomy_level=autonomy,
         risk=Severity(cfg.risk),
         approval_required=autonomy == AutonomyLevel.L2,
@@ -292,7 +384,10 @@ async def plan_actions_node(state: dict) -> dict:
     if not playbook:
         return state
 
-    actions = [build_action_from_config(cfg, playbook_id) for cfg in playbook.containment_actions]
+    actions = [
+        build_action_from_config(cfg, playbook_id, state.get("raw_alerts", []))
+        for cfg in playbook.containment_actions
+    ]
 
     # IR Lead 决策生效: P0 事件的高危动作不允许 L3+ 自动执行
     priority = state.get("ir_priority")
@@ -367,7 +462,11 @@ async def human_approve_node(state: dict) -> dict:
 
 
 async def execute_node(state: dict) -> dict:
-    """节点: 执行已批准的 Action (mock executor)"""
+    """节点: 执行已批准的 Action (mock executor)
+
+    跳过的动作也要落 ExecutionStep —— 时间线上"没有记录"和"审批未通过被跳过"
+    是两件事,只记成功的会让运维以为动作丢了。
+    """
     from app.core.metrics import record_execution
     from app.execution.mock import get_executor
 
@@ -376,16 +475,48 @@ async def execute_node(state: dict) -> dict:
 
     async with async_session() as session:
         repo = CaseRepository(session)
+        record_repo = ApprovalRecordRepository(session)
         case = await repo.get(case_id)
         if not case:
             return state
 
         for action in case.proposed_actions:
+            # 实时推送执行进度: CaseDetail 时间线在线刷新
+            from app.realtime.broadcast import broadcaster
+
             # L2 需审批通过才执行;L3/L4/L5 直接执行
             if action.autonomy_level == AutonomyLevel.L2:
-                approval = case.approvals.get(action.action_id)
-                if not approval or approval.decision != "approved":
-                    continue  # 未批准跳过
+                # 读真实审批记录 (ApprovalRecord 表),不是 case.approvals dict ——
+                # 后者从未被填充,读它会漏执行业已签批的动作
+                if not await record_repo.is_action_approved(case_id, action.action_id, action):
+                    await repo.append_execution(
+                        case_id,
+                        ExecutionStep(
+                            action_id=action.action_id,
+                            status="skipped",
+                            started_at=datetime.utcnow(),
+                            finished_at=datetime.utcnow(),
+                            result={
+                                "success": False,
+                                "skipped": True,
+                                "reason": "L2 审批未通过 (缺少必需角色签名或已被拒绝)",
+                                "action_type": action.action_type.value,
+                                "target": action.target,
+                            },
+                        ),
+                    )
+                    await broadcaster.publish(
+                        "execution_step",
+                        {
+                            "case_id": case_id,
+                            "action_id": action.action_id,
+                            "status": "skipped",
+                            "action_type": action.action_type.value,
+                            "executor": None,
+                            "skipped": True,
+                        },
+                    )
+                    continue
 
             step = ExecutionStep(
                 action_id=action.action_id,
@@ -395,8 +526,28 @@ async def execute_node(state: dict) -> dict:
             result = await executor.execute(action, case_id=case_id)
             step.status = "success" if result.get("success") else "failed"
             step.finished_at = datetime.utcnow()
-            step.result = result
+            # 时间线要能自证是真执行还是 mock: 动作类型/目标/执行器都留在记录里
+            step.result = {
+                **result,
+                "action_type": action.action_type.value,
+                "target": action.target,
+                "autonomy_level": action.autonomy_level.value,
+            }
+            if not result.get("success"):
+                step.error = result.get("error") or result.get("message")
             await repo.append_execution(case_id, step)
+
+            await broadcaster.publish(
+                "execution_step",
+                {
+                    "case_id": case_id,
+                    "action_id": action.action_id,
+                    "status": step.status,
+                    "action_type": action.action_type.value,
+                    "executor": step.result.get("executor"),
+                    "skipped": step.result.get("skipped", False),
+                },
+            )
 
             # 指标埋点
             record_execution(action.action_type.value, success=step.status == "success")
@@ -499,6 +650,14 @@ async def update_case_node(state: dict) -> dict:
 
         await _audit("case_closed", "system", case_id, {"tttr": tttr, "pack_id": pack_id})
         record_case_created("resolved", case.playbook_id or "")
+
+    # 实时推送 Case 闭环 (SDC: Dashboard 闭环率 / 合规页"已闭环"计数)
+    from app.realtime.broadcast import broadcaster
+
+    await broadcaster.publish(
+        "case_resolved",
+        {"case_id": case_id, "tttr_seconds": tttr, "escalated": bool(escalation.get("escalate_to"))},
+    )
 
     # 知识沉淀飞轮 (L3 案例 → L1 战术),失败不阻塞 Case 关闭
     from app.core.config import settings

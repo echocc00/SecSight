@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { Card, Descriptions, Tag, Tabs, message, Button, Progress, Space, Empty, Modal, Alert, List, Typography } from "antd";
 import { DownloadOutlined, FileTextOutlined, ReloadOutlined, ThunderboltOutlined } from "@ant-design/icons";
 import { api } from "../api/client";
+import { onEvent } from "../lib/ws";
 import ApprovalPanel from "../components/ApprovalPanel";
 import Timeline from "../components/Timeline";
 
@@ -41,6 +42,19 @@ export default function CaseDetail() {
 
   useEffect(() => {
     load();
+  }, [caseId]);
+
+  // WS 实时推送: 时间线每个执行步骤 / 审批提交 / 案例闭环都即时刷新
+  useEffect(() => {
+    if (!caseId) return;
+    const relevant = (payload: any) => payload?.case_id === caseId;
+    const cleanups = [
+      onEvent("execution_step", (p) => relevant(p) && load()),
+      onEvent("approval_submitted", (p) => relevant(p) && load()),
+      onEvent("case_resolved", (p) => relevant(p) && load()),
+      onEvent("alert_deduped", (p) => relevant(p) && load()),
+    ];
+    return () => cleanups.forEach((unsub) => unsub());
   }, [caseId]);
 
   const downloadReport = async (format: "html" | "markdown") => {
@@ -205,8 +219,13 @@ export default function CaseDetail() {
           },
           {
             key: "timeline",
-            label: "执行时间线",
-            children: <Timeline steps={caseData.execution_log} />,
+            label: `执行时间线 (${caseData.execution_log?.length || 0})`,
+            children: (
+              <Timeline
+                steps={caseData.execution_log}
+                actions={caseData.proposed_actions}
+              />
+            ),
           },
           {
             key: "evidence",

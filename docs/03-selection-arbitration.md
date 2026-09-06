@@ -139,7 +139,7 @@
 | **裁决** | **采纳 A+修正: OpenCTI CE 为主力情报存储 + 免费 IoC 源为数据源;付费厂商(微步/奇安信/360)预留接口,很长一段时间不接入** |
 | **理由** | OpenCTI 关系图天然适配 RAG;research 明确推荐 OpenCTI 为主;用户决策:免费优先,付费延后但需留接口 |
 | **影响** | 与 B 的"MISP富化"冲突 → 统一改为 OpenCTI 富化;MISP 降为可选组件 |
-| **License** | OpenCTI CE = Apache-2.0(商用友好);免费源均无 license 风险 |
+| **License** | OpenCTI CE = AGPL-3.0(**隔离部署**): 仅 HTTP GraphQL 调用,不 import 其代码 (见 §license 隔离约定);免费源均无 license 风险 |
 
 #### 3.5.1 情报源接入策略(免费优先 + 预留付费接口)
 

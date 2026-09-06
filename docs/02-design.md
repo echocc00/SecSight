@@ -13,6 +13,16 @@
 > - **MCP 协议** (§9.3 / §5 Agent 通信): 未实现。实际用 HTTP/REST 直调 (`backend/app/integrations/`),
 >   License 隔离通过网络边界实现,不依赖 MCP。原 `mcp_servers/` 目录已删除。
 > - **`docs/ARCHITECTURE.md`** 为当前架构的权威描述,本文档保留作设计决策追溯。
+>
+> 2026-09-06 追加 (W1-W3 实现补充,均以代码为准):
+> - **实时推送**: 新增 WebSocket 端点 `/api/ws/events` (JWT 鉴权),审批/告警/执行步骤/案例闭环经
+>   `app/realtime/broadcast.py` 广播,前端 `lib/ws.ts` 订阅。原设计未含此层。
+> - **OpenCTI 归因**: §3.5 中 OpenCTI 仅作情报存储;实际已实现为 ThreatIntelService 第 3 provider
+>   (`app/integrations/opencti.py`,GraphQL 搜 IoC + APT/恶意软件归因),纯 HTTP 不 import pycti。
+> - **处置目标**: 原设计剧本 action 直接带参数;实际 `parameters` 多为空,处置目标 (host/ip/pid/domain)
+>   由 `resolve_action_target()` 从告警解析 (`app/agents/nodes.py`)。
+> - **审批判定修正**: 修复一个真 bug —— 执行器原先读 `case.approvals` dict (从未被填充),导致已签批动作
+>   被跳过不执行;现改为读 `ApprovalRecordModel` 表 (`record_repo.is_action_approved`)。
 
 ---
 

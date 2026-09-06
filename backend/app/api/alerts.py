@@ -28,9 +28,14 @@ async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
 
     if deduped:
         from app.core.metrics import record_alert_deduped
+        from app.realtime.broadcast import broadcaster
 
         record_alert_deduped(alert.source)
         model = await session.get(CaseModel, case.case_id)
+        await broadcaster.publish(
+            "alert_deduped",
+            {"case_id": case.case_id, "alert_count": model.alert_count if model else 0},
+        )
         return {
             "case_id": case.case_id,
             "playbook_id": model.playbook_id if model else None,
@@ -51,6 +56,18 @@ async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
             await session.commit()
 
     await trigger_workflow(case.case_id, playbook_id)
+
+    # 实时推送: 审批面板/Dashboard 的角标立即更新,不等下轮轮询
+    from app.realtime.broadcast import broadcaster
+
+    await broadcaster.publish(
+        "case_created",
+        {
+            "case_id": case.case_id,
+            "severity": alert.severity.value,
+            "playbook_id": playbook_id,
+        },
+    )
 
     return {
         "case_id": case.case_id,

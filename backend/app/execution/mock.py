@@ -49,6 +49,7 @@ class MockExecutor(ActionExecutor):
             )
         return {
             "success": True,
+            "executor": "mock",
             "task_id": task_id,
             "message": f"[MOCK] executed {action.action_type.value}",
             "executed_at": datetime.utcnow().isoformat(),

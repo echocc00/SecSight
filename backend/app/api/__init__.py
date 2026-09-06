@@ -12,6 +12,7 @@ from app.api import (
     evidence,
     knowledge,
     playbooks,
+    realtime,
 )
 
 router = APIRouter()
@@ -25,3 +26,5 @@ router.include_router(compliance.router, prefix="/compliance", tags=["compliance
 router.include_router(agents.router, prefix="/agents", tags=["agents"])
 router.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"])
 router.include_router(audit.router, prefix="/audit", tags=["audit"])
+# realtime.router 的 /ws/events 会叠加上 main.py 的 /api 前缀 → /api/ws/events
+router.include_router(realtime.router, tags=["realtime"])

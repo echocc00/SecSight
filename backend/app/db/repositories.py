@@ -634,6 +634,30 @@ class ApprovalRecordRepository:
         result = await self.session.execute(stmt)
         return len(result.scalars().all())
 
+    async def is_action_approved(self, case_id: str, action_id: str, action) -> bool:
+        """该动作是否已完成所需角色的双签/三签 (与 approval service 同一判定)
+
+        高危动作 + ciso_or_delegate 三签,普通 L2 双签。执行器读这里而非
+        case.approvals dict —— 后者从未被审批服务填充,会漏执行已批准动作。
+        """
+        records = await self.list_by_action(case_id, action_id)
+        if not records:
+            return False
+        if any(r["decision"] == "rejected" for r in records):
+            return False
+
+        from app.approvals.service import CRITICAL_ACTIONS, CRITICAL_TRIPLE_ROLES, DOUBLE_SIGN_ROLES
+
+        required = (
+            CRITICAL_TRIPLE_ROLES
+            if action.action_type.value in CRITICAL_ACTIONS
+            else DOUBLE_SIGN_ROLES
+        )
+        approved_roles = {
+            r["approver_role"] for r in records if r["decision"] == "approved"
+        }
+        return required.issubset(approved_roles)
+
 
 class ProactiveRunRepository:
     """Proactive Agent 执行记录仓储"""

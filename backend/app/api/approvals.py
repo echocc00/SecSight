@@ -9,6 +9,7 @@ from app.api.schemas import ApiResponse, ApprovalRequest
 from app.approvals.service import ApprovalError, approval_service
 from app.core.security import APPROVAL_LIMIT, WEBHOOK_LIMIT, limiter
 from app.db.database import get_session
+from app.models.schemas import CaseStatus
 
 router = APIRouter()
 
@@ -43,7 +44,95 @@ async def approve_action(
     if result.get("all_approved"):
         await resume_workflow(case_id)
 
+    # 实时推送: 审批进度 / 全批恢复,立即可见
+    from app.realtime.broadcast import broadcaster
+
+    await broadcaster.publish(
+        "approval_submitted",
+        {
+            "case_id": case_id,
+            "action_id": action_id,
+            "all_approved": result.get("all_approved", False),
+            "case_status": result.get("case_status"),
+        },
+    )
+
     return ApiResponse(success=True, data=result)
+
+
+def _required_roles(action) -> set[str]:
+    from app.approvals.service import (
+        CRITICAL_ACTIONS,
+        CRITICAL_TRIPLE_ROLES,
+        DOUBLE_SIGN_ROLES,
+    )
+
+    return (
+        CRITICAL_TRIPLE_ROLES
+        if action.action_type.value in CRITICAL_ACTIONS
+        else DOUBLE_SIGN_ROLES
+    )
+
+
+@router.get("/pending", response_model=ApiResponse)
+async def list_all_pending_approvals(
+    limit: int = 200, session: AsyncSession = Depends(get_session)
+) -> ApiResponse:
+    """跨 Case 汇总待审批动作 (审批人工作台)
+
+    审批人不该为了找待办逐个点开 Case。只返回还缺签名的动作,
+    按 Case 创建时间倒序。
+    """
+    from app.db.repositories import ApprovalRecordRepository, CaseRepository
+
+    case_repo = CaseRepository(session)
+    record_repo = ApprovalRecordRepository(session)
+    cases = await case_repo.list(limit=limit)
+
+    items: list[dict] = []
+    for case in cases:
+        if case.status in (CaseStatus.resolved, CaseStatus.closed):
+            continue
+        for action in case.proposed_actions:
+            if not action.approval_required:
+                continue
+            records = await record_repo.list_by_action(case.case_id, action.action_id)
+            approved = {
+                r["approver_role"] for r in records if r["decision"] == "approved"
+            }
+            rejected = [r for r in records if r["decision"] == "rejected"]
+            required = _required_roles(action)
+            missing = required - approved
+            if not missing and not rejected:
+                continue
+            items.append(
+                {
+                    "case_id": case.case_id,
+                    "case_status": case.status.value,
+                    "playbook_id": case.playbook_id,
+                    "severity": case.judgment.severity.value if case.judgment else None,
+                    "incident_summary": (
+                        case.judgment.incident_summary if case.judgment else None
+                    ),
+                    "created_at": case.created_at.isoformat(),
+                    "action_id": action.action_id,
+                    "action_type": action.action_type.value,
+                    "target": action.target,
+                    "autonomy_level": action.autonomy_level.value,
+                    "risk": action.risk.value,
+                    "requires_double_sign": action.requires_double_sign,
+                    "required_roles": sorted(required),
+                    "approved_roles": sorted(approved),
+                    "missing_roles": sorted(missing),
+                    "rejected": bool(rejected),
+                    "records": records,
+                }
+            )
+
+    return ApiResponse(
+        success=True,
+        data={"count": len(items), "items": items},
+    )
 
 
 @router.get("/{case_id}/pending", response_model=ApiResponse)
@@ -59,7 +148,6 @@ async def list_pending_approvals(
         raise HTTPException(status_code=404, detail="Case not found")
 
     record_repo = ApprovalRecordRepository(session)
-    from app.approvals.service import CRITICAL_ACTIONS, DOUBLE_SIGN_ROLES, CRITICAL_TRIPLE_ROLES
 
     pending = []
     for action in case.proposed_actions:
@@ -67,11 +155,7 @@ async def list_pending_approvals(
             continue
         records = await record_repo.list_by_action(case_id, action.action_id)
         approved_roles = {r["approver_role"] for r in records if r["decision"] == "approved"}
-        required = (
-            CRITICAL_TRIPLE_ROLES
-            if action.action_type.value in CRITICAL_ACTIONS
-            else DOUBLE_SIGN_ROLES
-        )
+        required = _required_roles(action)
         pending.append(
             {
                 "action_id": action.action_id,

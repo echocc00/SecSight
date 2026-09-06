@@ -7,8 +7,9 @@ export default defineConfig({
     host: "0.0.0.0",
     port: 5173,
     proxy: {
-      "/api": "http://localhost:8001",
-      "/health": "http://localhost:8001",
+      // ws:true 让 Vite 转发 WebSocket upgrade (/api/ws/events)
+      "/api": { target: "http://localhost:8001", ws: true },
+      "/health": { target: "http://localhost:8001", ws: true },
     },
   },
   build: {

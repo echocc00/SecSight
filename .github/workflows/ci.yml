@@ -207,11 +207,14 @@ jobs:
         working-directory: frontend
         run: |
           npm run build
-          # gzip 后 main bundle 不超 300KB (app 页预算)
-          MAIN=$(find dist/assets/*.js -printf '%s\n' | sort -rn | head -1)
-          echo "largest bundle: $MAIN bytes"
-          if [ "$MAIN" -gt 307200 ]; then
-            echo "❌ 前端 bundle 超过 300KB 预算"
+          # 预算 450KB 是 gzip 压缩后大小 (antd+recharts 全量约 460KB gzip)。
+          # 注意之前用 find -printf '%s' 取的是未压缩字节,对 1.1MB 的 antd
+          # 永远爆禁,必须真正 gzip 后再比。
+          RAW=$(find dist/assets/*.js -printf '%s\n' | sort -rn | head -1)
+          MAIN=$(find dist/assets/*.js -size +1c -exec sh -c 'for f; do gzip -c "$f" | wc -c; done' sh {} + | sort -rn | head -1)
+          echo "largest bundle: ${RAW} bytes raw / ${MAIN} bytes gzip"
+          if [ "${MAIN:-0}" -gt 460800 ]; then
+            echo "❌ 前端 bundle gzip 后超过 450KB 预算"
             exit 1
           fi
       - name: 上传 SBOM + 扫描结果

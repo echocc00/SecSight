@@ -1,4 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import { disconnect as disconnectWS, connect as connectWS } from "../lib/ws";
 
 const TOKEN_KEY = "secsight_token";
 const REFRESH_KEY = "secsight_refresh";
@@ -87,6 +88,7 @@ export const auth = {
     localStorage.setItem(TOKEN_KEY, access_token);
     localStorage.setItem(REFRESH_KEY, refresh_token);
     localStorage.setItem(ROLE_KEY, role);
+    connectWS();
     return r.data;
   },
   logout: async () => {
@@ -95,6 +97,7 @@ export const auth = {
       // 服务端吊销 refresh token;网络失败也要清本地状态
       await client.post("/auth/logout", { refresh_token: refreshToken }).catch(() => undefined);
     }
+    disconnectWS();
     clearSession();
     window.location.href = "/login";
   },
@@ -145,6 +148,11 @@ export const api = {
   listPending: (caseId: string) =>
     client.get<ApiResponse<any[]>>(`/approvals/${caseId}/pending`).then((r) => r.data.data),
 
+  listAllPending: () =>
+    client
+      .get<ApiResponse<{ count: number; items: any[] }>>("/approvals/pending")
+      .then((r) => r.data.data),
+
   approveAction: (
     caseId: string,
     actionId: string,
@@ -192,4 +200,13 @@ export const api = {
   // 知识沉淀 (L3→L1)
   sedimentCase: (caseId: string) =>
     client.post<ApiResponse<any>>(`/knowledge/${caseId}/sediment`).then((r) => r.data.data),
+
+  // 审计日志 hash chain
+  verifyAuditChain: () =>
+    client.get<ApiResponse<any>>("/audit/verify").then((r) => r.data.data),
+
+  listAuditLogs: (caseId?: string, limit = 100) =>
+    client
+      .get<ApiResponse<any[]>>("/audit", { params: { case_id: caseId, limit } })
+      .then((r) => r.data.data),
 };
