@@ -181,18 +181,22 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚀 v0.6.0 — 全栈加固 + 实时化: 582 测试,覆盖率 87.1%。Alembic 迁移体系 / 7 角色 LangGraph / 审计链 / 限流 / 告警聚合 / Refresh Token / WebSocket 实时推送 / 真实 BGE-m3 Embedding / OpenCTI 归因。
+🚀 v0.6.0 — 全栈加固 + 实时化 + 22 剧本达成: 642 测试,覆盖率 87%+。Alembic 迁移体系 / 7 角色 LangGraph / 审计链 / 限流 / 告警聚合 / Refresh Token / WebSocket 实时推送 / 真实 BGE-m3 Embedding / OpenCTI 归因 / **设计文档 22 个剧本全部落地**。
 
-**v0.6 新增 (W1-W3 加固)**:
+**v0.6 新增 (W1-W3 加固 + 设计对齐)**:
 - **迁移与一致性**: Alembic async 迁移 + 生产启动 head 校验 (deploy/migrate.sh);依赖锁定 requirements{,-dev,-pg,-embedding}.lock + CI 校验 lock 不漂移
 - **Agent 织入**: DFIR/IRLead/Compliance/SOCManager 进 workflow;P0 事件高危动作强制 L2 三签;Proactive Agent APScheduler 自动调度,高危发现自动建 Case
 - **告警风暴抑制**: 时间窗聚合 (规则+主机+源IP 窗口内并入现有 Case),已闭环 Case 不吸收,deduped 计数入 /metrics
 - **认证升级**: JWT access 30min + refresh 7d 轮换/吊销;生产种子密码随机生成;前端 axios 自动续期 + 并发 401 单飞
-- **审计链**: 审计日志 SHA256 hash 链 (seq/prev/entry),/api/audit/verify 断链定位,合规报告内嵌完整性校验
+- **审计链**: 审计日志 SHA256 hash 链 (seq/prev/entry),/api/audit/verify 断链定位,合规报告内嵌完整性校验;180 天保留到期自动清理 (重建保留段链)
 - **限流**: login 5 / inject 30 / webhook 600 / search 60 / approval 120 每分钟,Redis 共享计数器 (多副本不放大)
-- **实时推送**: WebSocket /api/ws/events —— 新告警/审批/执行步骤/案例闭环推送到前端审批面板与 Case 时间线
+- **实时推送**: WebSocket /api/ws/events —— 新告警/审批/执行步骤/案例闭环推送到 Dashboard/审批面板/Case 时间线
 - **真实 Embedding**: TFIDF / BGE-m3 / OpenAI 兼容三 provider;换 provider 自动切集合 (维度隔离) + reindex 脚本
 - **OpenCTI 归因**: GraphQL 搜 IoC + APT/恶意软件归因 (第 3 情报源,纯 HTTP 不 import pycti)
+- **剧本 22 达成**: 补 10 剧本 (文件篡改/DDoS/WAF/Webshell/DNS隧道/数据库异常/API滥用/越权访问/备份失败/等保基线) → 设计文档 22 个场景全部覆盖
+- **处置正确性**: 高危 L2 动作强制三签兜底 (YAML 漏写不静默降级);真实 Shuffle 异步执行状态轮询回写 (不再"已触发"冒充"已成功");action target 从告警解析真实资产
+- **Dashboard 实时化**: 订阅 WS 即时刷新 (修复 /health 404 致 0 案件的既存 bug)
+- **国产设备适配**: 8 个真实格式 fixture + 修复 srcip/dstip 无下划线、天眼 sensor、绿盟 RSAS 字段缺口
 - **前端**: 独立审批面板 /approvals (跨 Case 待办+双签进度+严重性筛选)、执行时间线 (成功/失败/跳过+执行器+目标)、合规报告入口 /compliance (报告生成+审计链自检)
 - **处置目标解析**: 动作 target 从告警解析真实资产 (host/ip/pid/domain),不再空对象 —— 修复审批人看不到"要隔离谁"、Shuffle 拿空 target 的核心问题
 
