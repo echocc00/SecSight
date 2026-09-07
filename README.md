@@ -58,6 +58,16 @@
 
 ## 架构
 
+<p align="center">
+  <img src="docs/architecture.svg" alt="Architecture diagram" width="900">
+</p>
+
+
+<p align="center">
+  <img src="docs/architecture-sequence.svg" alt="Architecture sequence diagram" width="900">
+</p>
+
+
 ```mermaid
 flowchart LR
     classDef frontend fill:#083344,stroke:#22d3ee,color:#fff
