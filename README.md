@@ -181,7 +181,14 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚀 v0.6.0 — 全栈加固 + 实时化 + 22 剧本达成: 642 测试,覆盖率 87%+。Alembic 迁移体系 / 7 角色 LangGraph / 审计链 / 限流 / 告警聚合 / Refresh Token / WebSocket 实时推送 / 真实 BGE-m3 Embedding / OpenCTI 归因 / **设计文档 22 个剧本全部落地**。
+🚀 v0.6.1 — OpenCTI 真实验证通过: 642 测试,覆盖率 87%+。OpenCTI 6.2 容器 (隔离网段) 真实联调 + compose 部署修复。
+
+**v0.6.1 新增 (OpenCTI 容器真实验证)**:
+- **OpenCTI 6.2 真实联调**: 容器 healthy + /health 报 opencti: ok + live 测试 2/2 + 注入 E2E 三源情报真实查询 (AbuseIPDB/OTX/OpenCTI 并行,不 import pycti)
+- **compose 部署修复**: 端口 8080→4000 (OpenCTI 6.2 API 监听 4000);admin env 改 APP__ADMIN__* 双下划线 (nconf separator='__');token 改合法 UUID;OpenSearch 自签名 TLS 放行;补 MinIO S3 凭据 (InvalidAccessKeyId 修复);healthcheck 用 node fetch (容器无 curl)
+- **镜像构建修复**: requirements.lock 删 Windows 专属 pywin32 (破坏 Linux 构建);Dockerfile COPY alembic 迁移文件 (置于 editable install 后)
+
+**v0.6.0 — 全栈加固 + 实时化 + 22 剧本达成: 642 测试,覆盖率 87%+。Alembic 迁移体系 / 7 角色 LangGraph / 审计链 / 限流 / 告警聚合 / Refresh Token / WebSocket 实时推送 / 真实 BGE-m3 Embedding / OpenCTI 归因 / **设计文档 22 个剧本全部落地**。**
 
 **v0.6 新增 (W1-W3 加固 + 设计对齐)**:
 - **迁移与一致性**: Alembic async 迁移 + 生产启动 head 校验 (deploy/migrate.sh);依赖锁定 requirements{,-dev,-pg,-embedding}.lock + CI 校验 lock 不漂移

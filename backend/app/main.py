@@ -176,7 +176,7 @@ def create_app() -> FastAPI:
             "status": "ok",
             "env": settings.env,
             "mock_mode": settings.mock_mode,
-            "version": "0.6.0",
+            "version": "0.6.1",
             "components": components,
             "execution": execution,
             "proactive_scheduler": scheduler_status(),
