@@ -17,6 +17,11 @@ COPY pyproject.toml ./
 COPY app/ ./app/
 RUN pip install --no-cache-dir --no-deps -e .
 
+# Alembic 迁移 (config 目录,非 Python 包) — editable install 之后 COPY,
+# 避免 setuptools flat-layout 把 alembic 误判为顶层包
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

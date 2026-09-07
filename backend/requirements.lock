@@ -306,10 +306,6 @@ python-jose==3.5.0
     # via secsight-backend (pyproject.toml)
 python-multipart==0.0.32
     # via mcp
-pywin32==312
-    # via
-    #   mcp
-    #   portalocker
 pyyaml==6.0.3
     # via
     #   huggingface-hub

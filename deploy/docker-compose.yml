@@ -325,22 +325,30 @@ services:
       OPENCTI_ADMIN_EMAIL: ${OPENCTI_ADMIN_EMAIL}
       OPENCTI_ADMIN_PASSWORD: ${OPENCTI_ADMIN_PASSWORD}
       OPENCTI_ADMIN_TOKEN: ${OPENCTI_ADMIN_TOKEN}
+      APP__ADMIN__EMAIL: ${OPENCTI_ADMIN_EMAIL}
+      APP__ADMIN__PASSWORD: ${OPENCTI_ADMIN_PASSWORD}
+      APP__ADMIN__TOKEN: ${OPENCTI_ADMIN_TOKEN}
       ELASTICSEARCH__URL: https://opensearch-isolated:9200
       ELASTICSEARCH__USERNAME: admin
       ELASTICSEARCH__PASSWORD: ${OPENSEARCH_PASSWORD}
-      REDIS__HOSTNAME: redis-opencti
+      ELASTICSEARCH__SSL__REJECT_UNAUTHORIZED: "false"
       MINIO__ENDPOINT: minio
+      MINIO__ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO__SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO__USE_SSL: "false"
+      MINIO__BUCKET_NAME: opencti-bucket
+      REDIS__HOSTNAME: redis-opencti
       RABBITMQ__HOSTNAME: rabbitmq-opencti
     depends_on:
       redis-opencti: { condition: service_healthy }
-      minio: { condition: service_started }
+      minio: { condition: service_healthy }
       rabbitmq-opencti: { condition: service_started }
       opensearch-isolated: { condition: service_started }
     networks: [isolation-net]
-    ports: ["8082:8080"]
+    ports: ["8082:4000"]
     healthcheck:
       <<: *hc-base
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:4000/health').then(r=>process.exit(r.status>=500?1:0)).catch(()=>process.exit(1))\""]
     deploy:
       resources:
         limits: { cpus: "2", memory: 2g }
@@ -357,8 +365,15 @@ services:
     image: minio/minio:latest
     <<: *restart-policy
     command: server /data
+    environment:
+      <<: *common-env
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
     volumes: [opencti-data:/data]
     networks: [isolation-net]
+    healthcheck:
+      <<: *hc-base
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live || exit 1"]
     deploy:
       resources:
         limits: { cpus: "1", memory: 1g }
