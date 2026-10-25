@@ -6,10 +6,8 @@ requires_double_sign 依赖 YAML 显式 approval: double,漏写会退化成单�
 """
 from __future__ import annotations
 
-import pytest
 
 from app.agents.nodes import build_action_from_config
-from app.models.schemas import ActionType, AutonomyLevel
 from app.playbooks.loader import validate_playbooks
 from app.playbooks.models import ContainmentActionConfig, Playbook
 

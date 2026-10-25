@@ -1,12 +1,12 @@
 """Qdrant RAG 测试 — embedding + 检索 + 入库 (mock Qdrant,无需真实容器)"""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.retrieval.embedding import TFIDFEmbedding, embedding_provider
-from app.retrieval.mock import KnowledgeRetriever, MockRetriever, get_retriever
+from app.retrieval.mock import MockRetriever, get_retriever
 
 
 class TestEmbeddingProvider:

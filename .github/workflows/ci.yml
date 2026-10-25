@@ -100,6 +100,21 @@ jobs:
           fi
           echo "✅ 网络隔离检查完成"
 
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 安装 ruff
+        working-directory: backend
+        run: pip install ruff
+      - name: ruff check (app + tests)
+        working-directory: backend
+        run: python -m ruff check app/ tests/
+
   test:
     name: 测试 + 覆盖率
     runs-on: ubuntu-latest
@@ -114,7 +129,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.lock
-      - name: 运行测试
+      - name: 运行测试 (覆盖率门槛 80% 在 pyproject fail_under 强制,不再跑两遍)
         working-directory: backend
         env:
           PLAYBOOKS_DIR: ${{ github.workspace }}/playbooks
@@ -122,11 +137,7 @@ jobs:
           SECSIGHT_ENV: test
           SECSIGHT_MOCK_MODE: "true"
         run: |
-          python -m pytest tests/ --cov=app --cov-report=term-missing --cov-report=xml -p no:warnings
-      - name: 覆盖率门槛 (80%)
-        working-directory: backend
-        run: |
-          python -m pytest tests/ --cov=app --cov-fail-under=80 -q -p no:warnings || (echo "❌ 覆盖率低于 80%" && exit 1)
+          python -m pytest tests/ --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80 -p no:warnings
       - name: 上传覆盖率
         uses: actions/upload-artifact@v4
         if: always()

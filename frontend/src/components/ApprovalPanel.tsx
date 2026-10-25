@@ -1,7 +1,7 @@
 import { Table, Tag, Button, Modal, Form, Select, Input, message, Space, Tooltip } from "antd";
 import { CheckCircleOutlined, ClockCircleOutlined } from "@ant-design/icons";
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, auth } from "../api/client";
 
 interface PendingAction {
   action_id: string;
@@ -48,6 +48,10 @@ export default function ApprovalPanel({ caseId, actions, onApproved }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [pending, setPending] = useState<PendingAction[]>([]);
   const [loadingPending, setLoadingPending] = useState(false);
+  // 我的审批角色: 服务端从 JWT 映射 (viewer 为 null → 不可签)
+  const [myApprovalRole, setMyApprovalRole] = useState<string | null>(
+    auth.getApprovalRole()
+  );
 
   const loadPending = async () => {
     setLoadingPending(true);
@@ -63,6 +67,14 @@ export default function ApprovalPanel({ caseId, actions, onApproved }: Props) {
 
   useEffect(() => {
     loadPending();
+    // approval_role 本地缺失时拉一次 /auth/me (登录早于审批面板挂载的场景)
+    if (!myApprovalRole) {
+      auth
+        .getMe()
+        .then((me: any) => setMyApprovalRole(me?.approval_role ?? null))
+        .catch(() => undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseId, actions]);
 
   // pending 按 action_id 索引,便于查双签进度
@@ -73,7 +85,9 @@ export default function ApprovalPanel({ caseId, actions, onApproved }: Props) {
     setSubmitting(true);
     try {
       const res = await api.approveAction(caseId, modal!.actionId, values);
-      if (res.all_approved) {
+      if (res.rejected) {
+        message.warning("已拒绝: Case 已关闭,处置动作不会执行");
+      } else if (res.all_approved) {
         message.success("全部动作已批准,workflow 已恢复执行");
       } else {
         message.success("审批已提交,等待其他角色确认");
@@ -87,6 +101,33 @@ export default function ApprovalPanel({ caseId, actions, onApproved }: Props) {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const renderOpButton = (r: any) => {
+    if (!r.approval_required) return "—";
+    const p = pendingMap.get(r.action_id);
+    const done = p ? p.approved_roles.length >= p.required_roles.length : false;
+    if (done) return <Tag color="green">已通过</Tag>;
+    if (p?.records?.some((rec) => rec.decision === "rejected")) {
+      return <Tag color="red">已拒绝</Tag>;
+    }
+    if (!myApprovalRole) {
+      return (
+        <Tooltip title="当前账号角色不参与审批签署 (viewer/无审批角色)">
+          <Button size="small" disabled>
+            审批
+          </Button>
+        </Tooltip>
+      );
+    }
+    if (p?.approved_roles.includes(myApprovalRole)) {
+      return <Tag color="blue">我已签署 ({ROLE_LABELS[myApprovalRole] || myApprovalRole})</Tag>;
+    }
+    return (
+      <Button type="primary" size="small" onClick={() => setModal({ actionId: r.action_id })}>
+        审批
+      </Button>
+    );
   };
 
   return (
@@ -147,17 +188,7 @@ export default function ApprovalPanel({ caseId, actions, onApproved }: Props) {
           {
             title: "操作",
             key: "op",
-            render: (_, r) => {
-              if (!r.approval_required) return "—";
-              const p = pendingMap.get(r.action_id);
-              const done = p ? p.approved_roles.length >= p.required_roles.length : false;
-              if (done) return <Tag color="green">已通过</Tag>;
-              return (
-                <Button type="primary" size="small" onClick={() => setModal({ actionId: r.action_id })}>
-                  审批
-                </Button>
-              );
-            },
+            render: renderOpButton,
           },
         ]}
       />
@@ -169,23 +200,17 @@ export default function ApprovalPanel({ caseId, actions, onApproved }: Props) {
         confirmLoading={submitting}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="approver_role" label="审批角色" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: "incident_commander", label: "Incident Commander (指挥官)" },
-                { value: "approver", label: "Approver (审批人)" },
-                { value: "ciso_or_delegate", label: "CISO / Delegate" },
-              ]}
+          <Form.Item label="审批身份 (来自登录态,服务端校验)">
+            <Input
+              disabled
+              value={`${ROLE_LABELS[myApprovalRole || ""] || myApprovalRole || "—"} · ${auth.getRole() || ""}`}
             />
-          </Form.Item>
-          <Form.Item name="approver_user" label="审批人" rules={[{ required: true }]}>
-            <Input placeholder="用户名" />
           </Form.Item>
           <Form.Item name="decision" label="决定" rules={[{ required: true }]}>
             <Select
               options={[
                 { value: "approved", label: "批准" },
-                { value: "rejected", label: "拒绝" },
+                { value: "rejected", label: "拒绝 (Case 将关闭,动作不执行)" },
                 { value: "deferred", label: "延后" },
               ]}
             />

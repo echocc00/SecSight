@@ -12,7 +12,6 @@ from app.auth.service import (
     create_refresh_token,
     decode_refresh_token,
     get_current_user,
-    list_users,
     require_permission,
 )
 from app.core.security import LOGIN_LIMIT, limiter
@@ -72,10 +71,14 @@ async def login(
     req: LoginRequest,
     session=Depends(get_session),
 ) -> TokenResponse:
-    """登录获取 access + refresh token (DB 认证,降级内存字典)"""
+    """登录获取 access + refresh token (DB 认证)"""
     from app.auth.service import authenticate_user_async
 
-    user = await authenticate_user_async(req.username, req.password)
+    try:
+        user = await authenticate_user_async(req.username, req.password)
+    except Exception:
+        # DB 不可用: 绝不降级内置账号,明确报 503 让运维介入
+        raise HTTPException(status_code=503, detail="认证服务暂不可用,请稍后重试")
     if not user:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
     # DB 返回 role 为 str,内存字典返回 Role enum,统一处理
@@ -133,10 +136,16 @@ async def logout_all(
 
 @router.get("/me", response_model=ApiResponse)
 async def me(user=Depends(get_current_user)) -> ApiResponse:
-    """当前用户信息"""
+    """当前用户信息 (含审批角色映射,前端据此决定是否可签)"""
+    from app.auth.service import APPROVAL_ROLE_MAP
+
     return ApiResponse(
         success=True,
-        data={"username": user.username, "role": user.role.value},
+        data={
+            "username": user.username,
+            "role": user.role.value,
+            "approval_role": APPROVAL_ROLE_MAP.get(user.role),
+        },
     )
 
 

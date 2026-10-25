@@ -4,7 +4,6 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
-from app.api.schemas import ApiResponse
 from app.compliance.generator import report_generator
 
 router = APIRouter()

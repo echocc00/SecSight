@@ -5,7 +5,6 @@ import pathlib
 import tempfile
 
 import pytest
-import yaml
 
 from app.threat_intel.base import ThreatBookProvider
 

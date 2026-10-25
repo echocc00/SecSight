@@ -10,15 +10,13 @@
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
-import json
-import time
 from typing import Any
 
 import httpx
 
-from app.core.config import settings
 
 import structlog
 
@@ -197,19 +195,47 @@ async def notify_approval(
     return results
 
 
-# ============ 飞书签名校验 (回调) ============
+# ============ 回调签名校验 (飞书/钉钉) ============
 
 
-def verify_feishu_signature(
-    timestamp: str, body: str, app_secret: str
-) -> bool:
-    """校验飞书回调签名"""
+def compute_callback_signature(timestamp: str, body: str, app_secret: str) -> str:
+    """计算回调签名: base64(hmac_sha256(secret, f"{timestamp}\n{body}"))"""
     string_to_sign = f"{timestamp}\n{body}"
-    import base64
-
     hmac_code = hmac.new(
         app_secret.encode("utf-8"),
         string_to_sign.encode("utf-8"),
         hashlib.sha256,
     ).digest()
     return base64.b64encode(hmac_code).decode("utf-8")
+
+
+def verify_feishu_signature(
+    timestamp: str, body: str, signature: str, app_secret: str
+) -> bool:
+    """校验飞书回调签名 (header: X-Lark-Request-Timestamp / X-Lark-Signature)
+
+    原实现只计算签名不比对 —— 等于没校验。这里恒定时间比较。
+    """
+    if not all([timestamp, signature, app_secret]):
+        return False
+    expected = compute_callback_signature(timestamp, body, app_secret)
+    return hmac.compare_digest(expected, signature)
+
+
+def verify_dingtalk_signature(
+    timestamp: str, sign: str, app_secret: str
+) -> bool:
+    """校验钉钉回调签名 (加签模式: base64(hmac_sha256(secret, f"{timestamp}\n{secret}")))
+
+    注意与飞书不同: 钉钉的签名内容是 timestamp+换行+secret 自身。
+    """
+    if not all([timestamp, sign, app_secret]):
+        return False
+    string_to_sign = f"{timestamp}\n{app_secret}"
+    hmac_code = hmac.new(
+        app_secret.encode("utf-8"),
+        string_to_sign.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    expected = base64.b64encode(hmac_code).decode("utf-8")
+    return hmac.compare_digest(expected, sign)

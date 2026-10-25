@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.db.repositories import CaseRepository
 
 
 async def _seed_user(pg_session):

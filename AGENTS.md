@@ -47,10 +47,16 @@ SecSight 计划商业化,AGPL/GPL 组件必须进程隔离:
 - 错误显式处理, 不静默吞错
 - 测试覆盖 >= 80%
 - **鉴权**: JWT access(短时效)+ refresh token(存 hash、轮换、吊销),refresh 永不能当 access 用
-- **审批判定**: 执行器必须读 `ApprovalRecordModel` 表(record_repo.is_action_approved),不得读 `case.approvals` dict —— 后者从未被填充,读它会漏执行已签批动作
+- **路由鉴权基线**: 新增 router 必须显式声明鉴权策略(全局 JWT 依赖或 webhook 共享密钥),不允许默认裸奔;业务端点按权限矩阵挂 `require_permission`(见 `auth/service.py` PERMISSIONS)
+- **审批身份**: approver_role/approver_user 只能从 JWT 解出(`APPROVAL_ROLE_MAP` 服务端映射),请求体出现身份字段一律视为漏洞;同一用户同一动作只能签一票
+- **回调/webhook 准入**: IM 回调走签名校验(飞书 X-Lark-Signature / 钉钉加签),告警 webhook 走 `X-SecSight-Webhook-Token`;密钥未配置一律 403 fail-closed,不允许"未配置=放行"
+- **认证降级**: 认证路径禁止静默降级(生产 DB 异常必须 503),demo 用户仅限显式 mock_mode + 非生产
+- **审批判定**: 执行器必须读 `ApprovalRecordModel` 表(record_repo.is_action_approved),不得读 `case.approvals` dict —— 后者已随双真相源清理删除,别再引入类似字段
+- **审批终态**: 任一角色 rejected → Case 关闭(resolved),不再吸收签名;已闭环(resolved/closed)案件拒绝新审批
 - **处置目标**: action.target 必须从告警解析真实资产(host/ip/pid/domain),playbook parameters 只是静态策略
 - **时间戳**: 后端用 naive UTC,前端统一经 `parseUtc()`/`formatDateTime()`(lib/datetime.ts)按 UTC 解析,禁止裸 `dayjs(str)` 按本地时区
 - **实时推送**: 审批/告警入 Case/执行步骤走 `broadcaster.publish()`,前端订阅 `onEvent(type)`;加新事件类型同时发 broadcast
+- **健康端点**: `/health` 保持无鉴权(docker healthcheck 依赖)但只放组件连通性;执行能力/限流/调度等运维细节放需鉴权的 `/api/status`
 
 ## 6. 目录结构
 

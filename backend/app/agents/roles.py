@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from app.models.schemas import Case, JudgmentReport
+from app.models.schemas import Case
 
 
 @dataclass

@@ -80,8 +80,12 @@ class TestDuplicateRoleRejection:
 
 class TestRejection:
     @pytest.mark.asyncio
-    async def test_rejection_blocks_action(self, db_session):
-        """任一 rejected → action 不通过"""
+    async def test_rejection_closes_case(self, db_session):
+        """任一 rejected → 拒绝终态: Case 关闭,永不满足 all_approved
+
+        v0.6.2 起 rejected 是 Case 级终态 (防止已闭环案件被补签复活),
+        拒绝后不再吸收任何新签名。
+        """
         case_id, action_id = await _create_case_with_l2_action(db_session)
         await approval_service.submit_approval(
             case_id, action_id, "incident_commander", "alice", "approved"
@@ -89,8 +93,23 @@ class TestRejection:
         result = await approval_service.submit_approval(
             case_id, action_id, "approver", "bob", "rejected"
         )
-        assert result["action_status"] == "pending"  # rejected 不算 approved
+        assert result["action_status"] == "rejected"
         assert result["all_approved"] is False
+        assert result["rejected"] is True
+        case = await CaseRepository(db_session).get(case_id)
+        assert case.status == CaseStatus.resolved
+
+    @pytest.mark.asyncio
+    async def test_no_signature_after_rejection(self, db_session):
+        """拒绝后 (Case 已闭环) 再提交任何审批 → ApprovalError"""
+        case_id, action_id = await _create_case_with_l2_action(db_session)
+        await approval_service.submit_approval(
+            case_id, action_id, "incident_commander", "alice", "rejected"
+        )
+        with pytest.raises(ApprovalError, match="已闭环"):
+            await approval_service.submit_approval(
+                case_id, action_id, "approver", "bob", "approved"
+            )
 
 
 class TestSubmitApprovalErrors:

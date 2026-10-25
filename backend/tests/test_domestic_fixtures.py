@@ -15,6 +15,8 @@ import pytest
 from app.integrations.domestic_devices import parse_device_alert
 from app.models.schemas import Severity
 
+from tests.conftest import WEBHOOK_TOKEN
+
 _FIXTURES = Path(__file__).resolve().parent / "fixtures" / "domestic"
 
 
@@ -188,6 +190,7 @@ class TestWebhookEndToEndRealShapes:
         """深信服挖矿样本喂 webhook → 命中 cryptominer 剧本"""
         r = await client.post(
             "/api/alerts/devices/sangfor/webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
             json={
                 "alert_name": "主机中毒-挖矿木马",
                 "level": "严重",
@@ -205,6 +208,7 @@ class TestWebhookEndToEndRealShapes:
     async def test_webhook_topsec_ids_creates_case(self, client):
         r = await client.post(
             "/api/alerts/devices/topsec/webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
             json={
                 "alert_name": "Apache 漏洞攻击尝试",
                 "severity": "critical",

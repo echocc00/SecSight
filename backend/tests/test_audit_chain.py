@@ -1,7 +1,6 @@
 """审计日志 hash chain — 链式计算 / 篡改检测 / API / 报告集成"""
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 
 from app.db.repositories import AuditLogRepository
@@ -130,34 +129,21 @@ class TestVerifyChain:
 
 
 class TestAuditAPI:
-    async def _token(self, client) -> str:
-        from app.db.database import async_session
-        from app.db.repositories import UserRepository
-
-        async with async_session() as session:
-            await UserRepository(session).seed_defaults()
-        resp = await client.post(
-            "/api/auth/login", json={"username": "admin", "password": "ChangeMe_123!"}
-        )
-        return resp.json()["access_token"]
+    """P0 后 /api/audit* 需 JWT (case:read);401 语义用裸 client 验证"""
 
     async def test_verify_requires_auth(self, client):
         resp = await client.get("/api/audit/verify")
         assert resp.status_code == 401
 
-    async def test_verify_returns_valid_for_intact_chain(self, client):
-        token = await self._token(client)
-        resp = await client.get(
-            "/api/audit/verify", headers={"Authorization": f"Bearer {token}"}
-        )
+    async def test_verify_returns_valid_for_intact_chain(self, auth_client):
+        resp = await auth_client.get("/api/audit/verify")
         assert resp.status_code == 200
         assert resp.json()["data"]["valid"] is True
 
-    async def test_verify_detects_tampering_through_api(self, client):
+    async def test_verify_detects_tampering_through_api(self, auth_client):
         from app.db.database import async_session
         from app.db.models import AuditLogModel
 
-        token = await self._token(client)
         async with async_session() as session:
             repo = AuditLogRepository(session)
             await _seed(repo, 3)
@@ -165,76 +151,66 @@ class TestAuditAPI:
             target.action = "forged"
             await session.commit()
 
-        resp = await client.get(
-            "/api/audit/verify", headers={"Authorization": f"Bearer {token}"}
-        )
+        resp = await auth_client.get("/api/audit/verify")
         data = resp.json()["data"]
         assert data["valid"] is False
         assert data["broken_at_seq"] == 2
 
-    async def test_list_logs_includes_hash_fields(self, client):
+    async def test_list_logs_includes_hash_fields(self, auth_client):
         from app.db.database import async_session
 
-        token = await self._token(client)
         async with async_session() as session:
             await _seed(AuditLogRepository(session), 2)
 
-        resp = await client.get(
-            "/api/audit", headers={"Authorization": f"Bearer {token}"}
-        )
+        resp = await auth_client.get("/api/audit")
         logs = resp.json()["data"]
         assert logs
         assert "entry_hash" in logs[0]
         assert "prev_hash" in logs[0]
         assert "seq" in logs[0]
 
-    async def test_list_logs_filtered_by_case(self, client):
+    async def test_list_logs_filtered_by_case(self, auth_client):
         from app.db.database import async_session
 
-        token = await self._token(client)
         async with async_session() as session:
             repo = AuditLogRepository(session)
             await repo.record(action="a", actor="t", case_id="case-A")
             await repo.record(action="b", actor="t", case_id="case-B")
 
-        resp = await client.get(
-            "/api/audit",
-            params={"case_id": "case-A"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        resp = await auth_client.get("/api/audit", params={"case_id": "case-A"})
         logs = resp.json()["data"]
         assert all(log["case_id"] == "case-A" for log in logs)
 
 
 class TestComplianceReportChain:
-    async def test_report_embeds_chain_verification(self, client):
+    async def test_report_embeds_chain_verification(self, auth_client):
         """合规报告必须自证留痕未被篡改"""
-        inject = await client.post(
+        inject = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "audit-h1"},
         )
         case_id = inject.json()["data"]["case_id"]
 
-        resp = await client.get(f"/api/compliance/{case_id}/report")
+        resp = await auth_client.get(f"/api/compliance/{case_id}/report")
         assert resp.status_code == 200
         assert "审计链完整性校验" in resp.text
         assert "hash chain 校验通过" in resp.text
 
-    async def test_markdown_report_embeds_chain(self, client):
-        inject = await client.post(
+    async def test_markdown_report_embeds_chain(self, auth_client):
+        inject = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "audit-h2"},
         )
         case_id = inject.json()["data"]["case_id"]
 
-        resp = await client.get(f"/api/compliance/{case_id}/report.md")
+        resp = await auth_client.get(f"/api/compliance/{case_id}/report.md")
         assert "审计链完整性校验" in resp.text
 
-    async def test_report_flags_tampering(self, client):
+    async def test_report_flags_tampering(self, auth_client):
         from app.db.database import async_session
         from app.db.models import AuditLogModel
 
-        inject = await client.post(
+        inject = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "audit-h3"},
         )
@@ -246,5 +222,5 @@ class TestComplianceReportChain:
             target.actor = "attacker"
             await session.commit()
 
-        resp = await client.get(f"/api/compliance/{case_id}/report")
+        resp = await auth_client.get(f"/api/compliance/{case_id}/report")
         assert "审计链校验失败" in resp.text

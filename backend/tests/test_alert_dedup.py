@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-import pytest
 
 from app.db.repositories import CaseRepository, compute_agg_key
 from app.models.schemas import Alert, AssetRef, CaseStatus, Severity
@@ -119,21 +118,21 @@ class TestIngestAggregation:
 
 
 class TestInjectEndpointAggregation:
-    async def test_repeat_inject_merges_into_one_case(self, client):
+    async def test_repeat_inject_merges_into_one_case(self, auth_client):
         payload = {"alert_type": "xmrig_process", "hostname": "web-01", "src_ip": "10.0.0.5"}
 
-        first = await client.post("/api/alerts/inject", json=payload)
+        first = await auth_client.post("/api/alerts/inject", json=payload)
         assert first.status_code == 200
         first_data = first.json()["data"]
         assert first_data["deduped"] is False
 
-        second = await client.post("/api/alerts/inject", json=payload)
+        second = await auth_client.post("/api/alerts/inject", json=payload)
         second_data = second.json()["data"]
         assert second_data["deduped"] is True
         assert second_data["case_id"] == first_data["case_id"]
         assert second_data["alert_count"] == 2
 
-    async def test_merged_alert_does_not_retrigger_workflow(self, client, monkeypatch):
+    async def test_merged_alert_does_not_retrigger_workflow(self, auth_client, monkeypatch):
         """聚合命中必须跳过编排,否则重复生成处置动作"""
         calls: list = []
 
@@ -144,17 +143,17 @@ class TestInjectEndpointAggregation:
 
         monkeypatch.setattr(alerts_api, "trigger_workflow", _spy)
         payload = {"alert_type": "xmrig_process", "hostname": "web-09", "src_ip": "10.0.0.9"}
-        await client.post("/api/alerts/inject", json=payload)
-        await client.post("/api/alerts/inject", json=payload)
+        await auth_client.post("/api/alerts/inject", json=payload)
+        await auth_client.post("/api/alerts/inject", json=payload)
 
         assert len(calls) == 1
 
-    async def test_different_hosts_create_two_cases(self, client):
-        a = await client.post(
+    async def test_different_hosts_create_two_cases(self, auth_client):
+        a = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "h-a", "src_ip": "10.0.0.1"},
         )
-        b = await client.post(
+        b = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "h-b", "src_ip": "10.0.0.2"},
         )
@@ -162,7 +161,7 @@ class TestInjectEndpointAggregation:
 
 
 class TestDedupMetric:
-    async def test_metric_incremented_on_merge(self, client):
+    async def test_metric_incremented_on_merge(self, auth_client):
         from app.core.metrics import ALERTS_DEDUPED_TOTAL
 
         def _value() -> float:
@@ -175,10 +174,10 @@ class TestDedupMetric:
 
         before = _value()
         payload = {"alert_type": "xmrig_process", "hostname": "m-1", "src_ip": "10.0.1.1"}
-        await client.post("/api/alerts/inject", json=payload)
-        await client.post("/api/alerts/inject", json=payload)
+        await auth_client.post("/api/alerts/inject", json=payload)
+        await auth_client.post("/api/alerts/inject", json=payload)
         assert _value() > before
 
     async def test_metric_exposed(self, client):
-        resp = await client.get("/metrics")
+        resp = await client.get("/metrics")  # /metrics 公开,无需鉴权
         assert "secsight_alerts_deduped_total" in resp.text

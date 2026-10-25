@@ -4,10 +4,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import router as api_router
+from app.auth.service import require_permission
 from app.core.config import settings
 from app.core.security import get_cors_origins, validate_secrets
 from app.db.database import init_db
@@ -103,11 +104,18 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        from app.core.metrics import update_pending
+        """健康检查 (docker healthcheck 依赖,必须保持无鉴权)
+
+        信息收敛 (P2 修复): 不再暴露执行能力清单 (configured/mock_actions)、
+        限流配置、调度任务、embedding 状态 —— 这些是给攻击者的探测报告,
+        已迁移到需鉴权的 /api/status。只保留组件连通性与前端需要的开关位。
+        """
 
         # 扩展健康检查: 含各组件连通性
         components: dict[str, str] = {}
         try:
+            from app.db.database import async_session
+
             async with async_session() as session:
                 from sqlalchemy import text
 
@@ -145,7 +153,27 @@ def create_app() -> FastAPI:
                 "ok" if opencti["status"] == "ok" else f"{opencti['status']}"
             )
 
-        # 处置执行链路真实能力 (关键: 让用户知道哪些动作走 mock)
+        return {
+            "status": "ok",
+            "env": settings.env,
+            "mock_mode": settings.mock_mode,
+            "version": "0.6.1",
+            "components": components,
+            "features": {
+                "knowledge_sediment": settings.enable_knowledge_sediment,
+                "alert_dedup": settings.enable_alert_dedup,
+                "checkpointer": settings.enable_checkpointer,
+                "opensearch": settings.enable_opensearch,
+                "qdrant": settings.enable_qdrant,
+                "threat_intel": settings.enable_threat_intel,
+                "opencti": settings.enable_opencti,
+            },
+            "ts": datetime.utcnow().isoformat(),
+        }
+
+    @app.get("/api/status")
+    async def detailed_status(user=Depends(require_permission("case:read"))) -> dict:
+        """运维状态详情 (需鉴权): 执行能力/限流/调度/embedding"""
         from app.models.schemas import ActionType
 
         if settings.mock_mode or not settings.enable_shuffle:
@@ -167,31 +195,18 @@ def create_app() -> FastAPI:
                 "mock_actions": [a.value for a in ActionType if not wf_map.get(a.value)],
             }
 
-        # Proactive 调度器状态
         from app.agents.scheduler import scheduler_status
         from app.core.security import rate_limit_config
         from app.retrieval.embedding import embedding_status
 
         return {
-            "status": "ok",
             "env": settings.env,
             "mock_mode": settings.mock_mode,
             "version": "0.6.1",
-            "components": components,
             "execution": execution,
             "proactive_scheduler": scheduler_status(),
             "rate_limit": rate_limit_config(),
-            "features": {
-                "knowledge_sediment": settings.enable_knowledge_sediment,
-                "alert_dedup": settings.enable_alert_dedup,
-                "checkpointer": settings.enable_checkpointer,
-                "opensearch": settings.enable_opensearch,
-                "qdrant": settings.enable_qdrant,
-                "threat_intel": settings.enable_threat_intel,
-                "opencti": settings.enable_opencti,
-            },
             "embedding": embedding_status(),
-            "ts": datetime.utcnow().isoformat(),
         }
 
     @app.get("/metrics")

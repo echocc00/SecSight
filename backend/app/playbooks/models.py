@@ -54,3 +54,8 @@ class Playbook(BaseModel):
     investigation_steps: list[InvestigationStep] = Field(default_factory=list)
     containment_actions: list[ContainmentActionConfig] = Field(default_factory=list)
     knowledge_assets: dict = Field(default_factory=dict)
+    # 等保上报/证据包配置 (ransomware/data_exfiltration 等 YAML 顶层块)。
+    # 曾缺这两个字段 —— pydantic v2 默认忽略 extra,YAML 里精心写的
+    # dengbao_level/report_deadline_hours 被静默丢弃,等保上报配置成死数据。
+    evidence_pack: dict | None = None
+    compliance: dict | None = None

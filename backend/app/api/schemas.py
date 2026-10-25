@@ -14,9 +14,12 @@ class AlertInjectRequest(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
-    """审批提交"""
-    approver_role: str = Field(description="incident_commander | approver | ciso_or_delegate")
-    approver_user: str
+    """审批提交 (仅决策与意见)
+
+    身份安全: approver_role / approver_user 由服务端从 JWT 解出
+    (APPROVAL_ROLE_MAP 映射),此处刻意不设身份字段 —— 客户端自报身份
+    等于任何匿名请求都能替 CISO 签字。
+    """
     decision: str = Field(description="approved | rejected | deferred")
     comment: str = ""
 

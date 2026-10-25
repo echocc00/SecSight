@@ -94,13 +94,13 @@ class TestResilientFallback:
     @pytest.mark.asyncio
     async def test_tier2_falls_back_on_real_failure(self):
         gw = self._make_gateway(real_fails=True)
-        result = await gw.tier2_complete([{"role": "user", "content": "x"}])
+        await gw.tier2_complete([{"role": "user", "content": "x"}])
         assert gw.last_used == "fallback"
 
     @pytest.mark.asyncio
     async def test_tier3_falls_back_on_real_failure(self):
         gw = self._make_gateway(real_fails=True)
-        result = await gw.tier3_complete([{"role": "user", "content": "x"}])
+        await gw.tier3_complete([{"role": "user", "content": "x"}])
         assert gw.last_used == "fallback"
 
     @pytest.mark.asyncio

@@ -24,6 +24,7 @@ export default function CaseDetail() {
   const { caseId } = useParams<{ caseId: string }>();
   const [caseData, setCaseData] = useState<any>(null);
   const [evidence, setEvidence] = useState<any>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [sedimentLoading, setSedimentLoading] = useState(false);
   const [sedimentResult, setSedimentResult] = useState<any>(null);
@@ -33,10 +34,12 @@ export default function CaseDetail() {
     try {
       const c = await api.getCase(caseId);
       setCaseData(c);
+      setLoadError(null);
       const e = await api.getEvidence(caseId);
       setEvidence(e);
-    } catch {
-      setEvidence(null);
+    } catch (e: any) {
+      // 加载失败要可见可重试,不能永久停在骨架屏
+      setLoadError(e?.response?.data?.detail || "Case 加载失败");
     }
   };
 
@@ -51,6 +54,7 @@ export default function CaseDetail() {
     const cleanups = [
       onEvent("execution_step", (p) => relevant(p) && load()),
       onEvent("approval_submitted", (p) => relevant(p) && load()),
+      onEvent("approval_rejected", (p) => relevant(p) && load()),
       onEvent("case_resolved", (p) => relevant(p) && load()),
       onEvent("alert_deduped", (p) => relevant(p) && load()),
     ];
@@ -90,6 +94,24 @@ export default function CaseDetail() {
       setSedimentLoading(false);
     }
   };
+
+  if (loadError && !caseData) {
+    return (
+      <Card>
+        <Alert
+          type="error"
+          showIcon
+          message="Case 加载失败"
+          description={loadError}
+          action={
+            <Button size="small" icon={<ReloadOutlined />} onClick={load}>
+              重试
+            </Button>
+          }
+        />
+      </Card>
+    );
+  }
 
   if (!caseData) return <Card loading />;
 

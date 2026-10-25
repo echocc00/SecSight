@@ -1,4 +1,11 @@
-"""告警 API + mock 注入"""
+"""告警 API + mock 注入
+
+鉴权模型 (P0 修复):
+  - router (JWT): 注入/检索/拉取等运营端点,按权限矩阵控制
+    (inject/poll 需 alert:inject —— analyst/admin;search/types 需 case:read)。
+  - webhook_router (共享密钥): Wazuh/国产设备推送入口,无法持 JWT,
+    以 X-SecSight-Webhook-Token 校验,未配置密钥 fail-closed 403。
+"""
 # 注意: 本模块不用 `from __future__ import annotations` —— slowapi 的 @limiter.limit
 # 包装器丢失原函数 __globals__,字符串注解无法解析,FastAPI 会把 body 参数误判成 query。
 from fastapi import APIRouter, Depends, Request
@@ -6,7 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.workflow import trigger_workflow
 from app.api.schemas import AlertInjectRequest, ApiResponse
-from app.core.security import INJECT_LIMIT, SEARCH_LIMIT, WEBHOOK_LIMIT, limiter
+from app.auth.service import CurrentUser, require_permission
+from app.core.security import (
+    INJECT_LIMIT,
+    SEARCH_LIMIT,
+    WEBHOOK_LIMIT,
+    limiter,
+    verify_webhook_token,
+)
 from app.db.database import get_session
 from app.db.models import CaseModel
 from app.db.repositories import CaseRepository
@@ -14,7 +28,10 @@ from app.mock.alerts import MOCK_ALERTS
 from app.models.schemas import CaseStatus
 from app.playbooks.engine import engine as playbook_engine
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_permission("case:read"))], tags=["alerts"])
+webhook_router = APIRouter(
+    dependencies=[Depends(verify_webhook_token)], tags=["alerts-webhook"]
+)
 
 
 async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
@@ -85,6 +102,7 @@ async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
 async def inject_alert(
     request: Request,
     req: AlertInjectRequest,
+    _user: CurrentUser = Depends(require_permission("alert:inject")),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """注入 mock 告警 → 自动建 Case + 匹配剧本 + 触发编排
@@ -116,7 +134,7 @@ async def list_alert_types() -> ApiResponse:
     return ApiResponse(success=True, data={"types": list(MOCK_ALERTS.keys())})
 
 
-@router.post("/wazuh-webhook", response_model=ApiResponse)
+@webhook_router.post("/wazuh-webhook", response_model=ApiResponse)
 @limiter.limit(WEBHOOK_LIMIT)
 async def wazuh_webhook(
     request: Request,
@@ -148,6 +166,7 @@ async def wazuh_webhook(
 @router.post("/wazuh/poll", response_model=ApiResponse)
 async def poll_wazuh_alerts(
     limit: int = 20,
+    _user: CurrentUser = Depends(require_permission("alert:inject")),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """从 Wazuh 拉取最近告警 → 自动建 Case + 匹配剧本 + 触发编排
@@ -310,7 +329,7 @@ async def list_supported_devices() -> ApiResponse:
     return ApiResponse(success=True, data={"devices": _list()})
 
 
-@router.post("/devices/{device_type}/webhook", response_model=ApiResponse)
+@webhook_router.post("/devices/{device_type}/webhook", response_model=ApiResponse)
 @limiter.limit(WEBHOOK_LIMIT)
 async def device_webhook(
     request: Request,

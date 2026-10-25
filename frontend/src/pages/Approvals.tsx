@@ -67,14 +67,6 @@ const SEVERITY_ORDER: Record<string, number> = {
   low: 3,
 };
 
-// 当前登录角色能签的审批角色。审批人不该看到自己签不了的角色选项。
-const ROLE_OPTIONS_BY_USER: Record<string, string[]> = {
-  admin: ["incident_commander", "approver", "ciso_or_delegate"],
-  approver: ["approver", "incident_commander"],
-  analyst: [],
-  viewer: [],
-};
-
 export default function Approvals() {
   const [items, setItems] = useState<PendingItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -83,9 +75,13 @@ export default function Approvals() {
   const [modal, setModal] = useState<PendingItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
+  // 我的审批角色: 服务端从 JWT 映射 (analyst→指挥官 / approver→审批人 / admin→CISO)。
+  // 前端不再提供角色下拉 —— 换角色刷签在后端已被身份绑定阻断,UI 如实呈现。
+  const [myApprovalRole, setMyApprovalRole] = useState<string | null>(
+    auth.getApprovalRole()
+  );
 
   const userRole = auth.getRole() || "viewer";
-  const allowedRoles = ROLE_OPTIONS_BY_USER[userRole] ?? [];
 
   const load = async () => {
     setLoading(true);
@@ -103,18 +99,25 @@ export default function Approvals() {
 
   useEffect(() => {
     load();
+    if (!myApprovalRole) {
+      auth
+        .getMe()
+        .then((me: any) => setMyApprovalRole(me?.approval_role ?? null))
+        .catch(() => undefined);
+    }
     // 审批是时效工作: WS 推送实时刷新,30s 轮询兜底 (WS 断线自动恢复)
     const cleanups = [
       onEvent("approval_submitted", () => load()),
+      onEvent("approval_rejected", () => load()),
       onEvent("case_created", () => load()),
       onEvent("alert_deduped", () => load()),
-      onEvent("approval_revoked", () => load()),
     ];
     const timer = setInterval(load, 30_000);
     return () => {
       cleanups.forEach((unsub) => unsub());
       clearInterval(timer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const submit = async () => {
@@ -122,9 +125,13 @@ export default function Approvals() {
     setSubmitting(true);
     try {
       const res = await api.approveAction(modal!.case_id, modal!.action_id, values);
-      message.success(
-        res.all_approved ? "全部动作已批准,workflow 已恢复执行" : "审批已提交,等待其他角色确认"
-      );
+      if (res.rejected) {
+        message.warning("已拒绝: Case 已关闭,处置动作不会执行");
+      } else {
+        message.success(
+          res.all_approved ? "全部动作已批准,workflow 已恢复执行" : "审批已提交,等待其他角色确认"
+        );
+      }
       setModal(null);
       form.resetFields();
       await load();
@@ -152,6 +159,34 @@ export default function Approvals() {
   });
 
   const criticalCount = items.filter((i) => i.severity === "critical").length;
+
+  const renderOpButton = (_: unknown, r: PendingItem) => {
+    if (r.rejected) return <Tag color="red">已拒绝</Tag>;
+    if (!myApprovalRole) {
+      return (
+        <Tooltip title="当前账号角色不参与审批签署">
+          <Button size="small" disabled>
+            审批
+          </Button>
+        </Tooltip>
+      );
+    }
+    if (r.approved_roles.includes(myApprovalRole)) {
+      return <Tag color="blue">我已签署</Tag>;
+    }
+    return (
+      <Button
+        type="primary"
+        size="small"
+        onClick={() => {
+          form.setFieldsValue({ decision: "approved", comment: "" });
+          setModal(r);
+        }}
+      >
+        审批
+      </Button>
+    );
+  };
 
   return (
     <div>
@@ -184,13 +219,13 @@ export default function Approvals() {
         }
       >
         {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />}
-        {allowedRoles.length === 0 && (
+        {!myApprovalRole && (
           <Alert
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
             message={`当前角色 ${userRole} 无审批权限`}
-            description="只能查看待审批列表。需要 approver 或 admin 角色才能提交审批。"
+            description="只能查看待审批列表。审批角色由系统按登录角色映射: analyst→指挥官,approver→审批人,admin→CISO。"
           />
         )}
         {!loading && sorted.length === 0 ? (
@@ -279,28 +314,7 @@ export default function Approvals() {
                 title: "操作",
                 key: "op",
                 width: 90,
-                render: (_, r) => (
-                  <Button
-                    type="primary"
-                    size="small"
-                    disabled={allowedRoles.length === 0}
-                    onClick={() => {
-                      // 预填第一个还缺且当前用户能签的角色
-                      const candidate =
-                        r.missing_roles.find((role) => allowedRoles.includes(role)) ||
-                        allowedRoles[0];
-                      form.setFieldsValue({
-                        approver_role: candidate,
-                        approver_user: "",
-                        decision: "approved",
-                        comment: "",
-                      });
-                      setModal(r);
-                    }}
-                  >
-                    审批
-                  </Button>
-                ),
+                render: renderOpButton,
               },
             ]}
           />
@@ -340,25 +354,17 @@ export default function Approvals() {
               }
             />
             <Form form={form} layout="vertical">
-              <Form.Item name="approver_role" label="审批角色" rules={[{ required: true }]}>
-                <Select
-                  options={allowedRoles.map((role) => ({
-                    value: role,
-                    label: `${ROLE_LABELS[role] || role}${
-                      modal.approved_roles.includes(role) ? " (已签)" : ""
-                    }`,
-                    disabled: modal.approved_roles.includes(role),
-                  }))}
+              <Form.Item label="审批身份 (来自登录态,服务端校验)">
+                <Input
+                  disabled
+                  value={`${ROLE_LABELS[myApprovalRole || ""] || myApprovalRole || "—"} · ${userRole}`}
                 />
-              </Form.Item>
-              <Form.Item name="approver_user" label="审批人" rules={[{ required: true }]}>
-                <Input placeholder="用户名" />
               </Form.Item>
               <Form.Item name="decision" label="决定" rules={[{ required: true }]}>
                 <Select
                   options={[
                     { value: "approved", label: "批准" },
-                    { value: "rejected", label: "拒绝" },
+                    { value: "rejected", label: "拒绝 (Case 将关闭,动作不执行)" },
                     { value: "deferred", label: "延后" },
                   ]}
                 />

@@ -100,6 +100,10 @@ sudo systemctl start wazuh-agent
 
 让 Wazuh 把告警实时推送到 SecSight,而不是 SecSight 轮询 (TTTR 更低):
 
+> ⚠️ **v0.6.2 起 webhook 需准入凭证 (fail-closed)**:先在 `deploy/.env` 设置
+> `WEBHOOK_TOKEN=<随机串>`,并在 integration 里加 `<api_key>` 项 ——
+> Wazuh 会把它作为 HTTP header `X-SecSight-Webhook-Token` 发送,不匹配则 403。
+
 ```bash
 # 进入 Wazuh manager 容器
 docker compose exec wazuh-manager bash
@@ -111,6 +115,7 @@ cat >> /var/ossec/etc/ossec.conf <<'XML'
   <hook_url>http://secsight-backend:8000/api/alerts/wazuh-webhook</hook_url>
   <rule_id>5710,5712,550,591,31151</rule_id>
   <alert_format>json</alert_format>
+  <api_key>与 deploy/.env 的 WEBHOOK_TOKEN 一致的随机串</api_key>
 </integration>
 XML
 

@@ -15,6 +15,8 @@ from app.integrations.domestic_devices import (
 )
 from app.models.schemas import Severity
 
+from tests.conftest import WEBHOOK_TOKEN
+
 
 class TestSeverityMapping:
     def test_chinese_severity(self):
@@ -124,6 +126,7 @@ class TestDeviceWebhookEndpoint:
     async def test_qianxin_webhook_creates_case(self, client):
         r = await client.post(
             "/api/alerts/devices/qianxin/webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
             json={
                 "alert_name": "SQL注入",
                 "severity": "高",
@@ -145,13 +148,14 @@ class TestDeviceWebhookEndpoint:
     async def test_unknown_device_returns_error(self, client):
         r = await client.post(
             "/api/alerts/devices/cisco/webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
             json={"x": 1},
         )
         assert r.json()["success"] is False
 
     @pytest.mark.asyncio
-    async def test_list_supported_devices(self, client):
-        r = await client.get("/api/alerts/devices/supported")
+    async def test_list_supported_devices(self, auth_client):
+        r = await auth_client.get("/api/alerts/devices/supported")  # 业务端点,需 JWT
         assert r.status_code == 200
         devices = r.json()["data"]["devices"]
         assert "qianxin" in devices

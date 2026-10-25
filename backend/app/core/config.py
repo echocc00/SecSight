@@ -172,6 +172,16 @@ class Settings(BaseSettings):
     # 避免所有部署共用 ChangeMe_123!
     seed_user_password: str = Field(default="", alias="SEED_USER_PASSWORD")
 
+    # Webhook 共享密钥 (Wazuh/国产设备 → SecSight 推送告警)。
+    # 未配置时 webhook 端点直接 403 (fail-closed) —— 告警入口可触发全编排链路,
+    # 必须有准入凭证。
+    webhook_token: str = Field(default="", alias="WEBHOOK_TOKEN")
+
+    # IM 回调签名密钥 (审批按钮回调)。未配置时回调端点直接 403 (fail-closed),
+    # 否则任何能碰到端口的人都可以一键批准高危处置。
+    feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
+    dingtalk_app_secret: str = Field(default="", alias="DINGTALK_APP_SECRET")
+
 
 @lru_cache
 def get_settings() -> Settings:

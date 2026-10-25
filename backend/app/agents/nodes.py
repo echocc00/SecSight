@@ -18,7 +18,6 @@ from app.llm_gateway.mock import get_llm
 from app.models.schemas import (
     Action,
     ActionType,
-    ApprovalRecord,
     AutonomyLevel,
     CaseStatus,
     ExecutionStep,
@@ -27,7 +26,7 @@ from app.models.schemas import (
 )
 from app.retrieval.mock import get_retriever
 from app.playbooks.engine import engine as playbook_engine
-from app.playbooks.models import ContainmentActionConfig, Playbook
+from app.playbooks.models import ContainmentActionConfig
 
 import structlog
 
@@ -274,7 +273,7 @@ async def enrich_ioc_node(state: dict) -> dict:
 
 async def analyze_node(state: dict) -> dict:
     """节点: mock LLM 输出结构化研判报告"""
-    from app.core.metrics import record_case_created, record_llm_call
+    from app.core.metrics import record_llm_call
 
     llm = get_llm()
     case_id = state["case_id"]
@@ -633,8 +632,7 @@ async def _poll_shuffle_to_terminal(case_id: str, action_id: str, execution_id: 
 async def escalate_node(state: dict) -> dict:
     """节点: 审批拒绝/超时 → 升级"""
     case_id = state["case_id"]
-    async with async_session() as session:
-        repo = CaseRepository(session)
+    async with async_session():
         await _audit("escalated_to_soc_manager", "system", case_id, {})
     log.info("node.escalate", case_id=case_id)
     return state

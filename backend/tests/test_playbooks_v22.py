@@ -1,8 +1,12 @@
-"""剧本 12→22 补齐 — 10 个新剧本可命中、L2 双签、端到端闭环可跑"""
+"""剧本 12→22 补齐 — 10 个新剧本可命中、L2 双签、端到端闭环可跑
+
+P0 后: 业务端点需 JWT (auth_client);签署身份来自 JWT / IM 回调 (conftest.sign_approval)。
+"""
 from __future__ import annotations
 
 import pytest
 
+from tests.conftest import approve_action_with_all_roles
 from app.mock.alerts import MOCK_ALERTS
 from app.playbooks.engine import engine
 
@@ -47,9 +51,9 @@ class TestAlertToPlaybookMatching:
 
 class TestInjectNewPlaybooks:
     @pytest.mark.asyncio
-    async def test_inject_sets_intended_playbook(self, client):
+    async def test_inject_sets_intended_playbook(self, auth_client):
         for alert_type, expected in _NEW_MATCHES.items():
-            resp = await client.post(
+            resp = await auth_client.post(
                 "/api/alerts/inject",
                 json={"alert_type": alert_type, "hostname": f"inj-{alert_type}"},
             )
@@ -58,14 +62,14 @@ class TestInjectNewPlaybooks:
             assert data["playbook_id"] == expected, f"{alert_type} → {data['playbook_id']}"
 
     @pytest.mark.asyncio
-    async def test_high_risk_new_playbook_requires_l2_double_sign(self, client):
+    async def test_high_risk_new_playbook_requires_l2_double_sign(self, auth_client):
         """webshell 剧本来高危处置 (隔离/封禁) 必须 L2 三签"""
-        resp = await client.post(
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "webshell_upload", "hostname": "inj-webshell"},
         )
         case_id = resp.json()["data"]["case_id"]
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
         assert case["playbook_id"] == "pb_webshell_v1"
 
         critical = [
@@ -78,14 +82,14 @@ class TestInjectNewPlaybooks:
             assert action["requires_double_sign"] is True
 
     @pytest.mark.asyncio
-    async def test_backup_failure_case_closes_loop(self, client):
+    async def test_backup_failure_case_closes_loop(self, auth_client):
         """L4 主导剧本 (backup) 应能自动执行并 closed,无卡审批"""
-        resp = await client.post(
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "backup_failure", "hostname": "inj-backup"},
         )
         case_id = resp.json()["data"]["case_id"]
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
         assert case["playbook_id"] == "pb_backup_failure_v1"
         # action 主要为 L4/L5 自动执行,不应停留在 pending_approval
         assert case["status"] != "pending_approval" or any(
@@ -95,28 +99,25 @@ class TestInjectNewPlaybooks:
 
 class TestEndToEndOneNewScenario:
     @pytest.mark.asyncio
-    async def test_dns_tunneling_approve_resolve_roundtrip(self, client):
+    async def test_dns_tunneling_approve_resolve_roundtrip(self, auth_client):
         """DDoS→L2 处置→全批→闭环 (完整链路真实跑通)"""
         from app.agents.nodes import execute_node
 
-        resp = await client.post(
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "dns_tunneling", "hostname": "inj-dns"},
         )
         case_id = resp.json()["data"]["case_id"]
-        pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
+        pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         assert pending, "dns_tunneling 应产生待审批动作"
 
         for item in pending:
-            for role in item["required_roles"]:
-                r = await client.post(
-                    f"/api/approvals/{case_id}/actions/{item['action_id']}/approve",
-                    json={"approver_role": role, "approver_user": f"{role}-u", "decision": "approved"},
-                )
-                assert r.status_code == 200, r.text
+            await approve_action_with_all_roles(
+                auth_client, case_id, item["action_id"], item["required_roles"]
+            )
 
         await execute_node({"case_id": case_id})
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
         l2 = [a for a in case["proposed_actions"] if a["approval_required"]]
         executed = {
             s["action_id"]: s for s in case["execution_log"] if s["status"] == "success"

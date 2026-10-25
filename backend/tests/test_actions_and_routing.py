@@ -1,7 +1,6 @@
 """动作构建 + workflow 路由测试"""
 from __future__ import annotations
 
-import pytest
 
 from app.agents.nodes import _infer_action_type, build_action_from_config
 from app.agents.workflow import route_after_plan

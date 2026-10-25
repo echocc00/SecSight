@@ -9,7 +9,6 @@ Case 主体仍在 Postgres (事务一致性),OpenSearch 仅存告警副本用于
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 import httpx
 

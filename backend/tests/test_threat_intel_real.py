@@ -5,7 +5,6 @@ httpx MockTransport mock 真实 API 响应 (无需真实 key/网络)。
 """
 from __future__ import annotations
 
-import json
 import os
 from unittest.mock import patch
 

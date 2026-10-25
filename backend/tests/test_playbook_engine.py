@@ -1,7 +1,6 @@
 """剧本匹配引擎测试 — 评分匹配正确性"""
 from __future__ import annotations
 
-import pytest
 
 from app.mock.alerts import (
     critical_service_crash_alert,
@@ -12,7 +11,7 @@ from app.mock.alerts import (
     xmrig_process_alert,
 )
 from app.models.schemas import Alert, AssetRef, Severity
-from app.playbooks.engine import PlaybookEngine, engine
+from app.playbooks.engine import engine
 
 
 class TestPlaybookLoading:

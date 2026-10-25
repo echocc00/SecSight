@@ -92,29 +92,29 @@ class TestAssetHardening:
 
 class TestProactiveAPI:
     @pytest.mark.asyncio
-    async def test_list_proactive_endpoint(self, client):
-        r = await client.get("/api/agents/proactive")
+    async def test_list_proactive_endpoint(self, auth_client):
+        r = await auth_client.get("/api/agents/proactive")
         data = r.json()["data"]
         assert len(data["agents"]) == 4
         assert "scheduler" in data
         assert "enabled" in data["scheduler"]
 
     @pytest.mark.asyncio
-    async def test_run_proactive_endpoint(self, client):
-        r = await client.post("/api/agents/proactive/threat_hunting")
+    async def test_run_proactive_endpoint(self, auth_client):
+        r = await auth_client.post("/api/agents/proactive/threat_hunting")
         assert r.status_code == 200
         assert r.json()["data"]["agent"] == "threat_hunting"
 
     @pytest.mark.asyncio
-    async def test_run_unknown_proactive_404(self, client):
-        r = await client.post("/api/agents/proactive/nonexistent")
+    async def test_run_unknown_proactive_404(self, auth_client):
+        r = await auth_client.post("/api/agents/proactive/nonexistent")
         assert r.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_manual_run_recorded_in_history(self, client):
+    async def test_manual_run_recorded_in_history(self, auth_client):
         """手动触发也落库 proactive_runs"""
-        await client.post("/api/agents/proactive/vuln_scan")
-        r = await client.get("/api/agents/proactive/runs")
+        await auth_client.post("/api/agents/proactive/vuln_scan")
+        r = await auth_client.get("/api/agents/proactive/runs")
         runs = r.json()["data"]
         assert len(runs) >= 1
         vuln_runs = [x for x in runs if x["agent_name"] == "vuln_scan"]
@@ -123,23 +123,23 @@ class TestProactiveAPI:
         assert vuln_runs[0]["status"] == "success"
 
     @pytest.mark.asyncio
-    async def test_run_detail_includes_result(self, client):
-        r = await client.post("/api/agents/proactive/asset_hardening")
+    async def test_run_detail_includes_result(self, auth_client):
+        r = await auth_client.post("/api/agents/proactive/asset_hardening")
         run_id = r.json()["data"]["result"]["run_id"]
-        detail = (await client.get(f"/api/agents/proactive/runs/{run_id}")).json()["data"]
+        detail = (await auth_client.get(f"/api/agents/proactive/runs/{run_id}")).json()["data"]
         assert detail["run_id"] == run_id
         assert detail["result"]["agent"] == "asset_hardening"
 
     @pytest.mark.asyncio
-    async def test_run_detail_404(self, client):
-        r = await client.get("/api/agents/proactive/runs/no-such-run")
+    async def test_run_detail_404(self, auth_client):
+        r = await auth_client.get("/api/agents/proactive/runs/no-such-run")
         assert r.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_runs_filter_by_agent(self, client):
-        await client.post("/api/agents/proactive/threat_hunting")
-        await client.post("/api/agents/proactive/vuln_scan")
-        r = await client.get(
+    async def test_runs_filter_by_agent(self, auth_client):
+        await auth_client.post("/api/agents/proactive/threat_hunting")
+        await auth_client.post("/api/agents/proactive/vuln_scan")
+        r = await auth_client.get(
             "/api/agents/proactive/runs", params={"agent_name": "vuln_scan"}
         )
         runs = r.json()["data"]
@@ -150,18 +150,18 @@ class TestProactiveCaseCreation:
     """Proactive → Reactive 衔接: 高危 finding 自动建 Case"""
 
     @pytest.mark.asyncio
-    async def test_high_severity_vuln_creates_case(self, client):
+    async def test_high_severity_vuln_creates_case(self, auth_client):
         """vuln_scan 的 critical/high 漏洞自动建 Case"""
-        r = await client.post("/api/agents/proactive/vuln_scan")
+        r = await auth_client.post("/api/agents/proactive/vuln_scan")
         result = r.json()["data"]["result"]
         # mock 数据含 1 个 high (CVE-2024-1234)
         assert result["cases_created"] >= 1
 
         # list API 不返回 alerts,逐个查详情确认来源
-        cases = (await client.get("/api/cases")).json()["data"]
+        cases = (await auth_client.get("/api/cases")).json()["data"]
         found = False
         for c in cases:
-            detail = (await client.get(f"/api/cases/{c['case_id']}")).json()["data"]
+            detail = (await auth_client.get(f"/api/cases/{c['case_id']}")).json()["data"]
             if any(a.get("source") == "vuln_scan" for a in detail.get("alerts", [])):
                 found = True
                 alert = next(
@@ -173,16 +173,16 @@ class TestProactiveCaseCreation:
         assert found, "high 漏洞应建来源为 vuln_scan 的 Case"
 
     @pytest.mark.asyncio
-    async def test_hunting_without_confirmed_creates_no_case(self, client):
+    async def test_hunting_without_confirmed_creates_no_case(self, auth_client):
         """狩猎中 (status=hunting) 不建 Case,仅 confirmed 才建"""
-        r = await client.post("/api/agents/proactive/threat_hunting")
+        r = await auth_client.post("/api/agents/proactive/threat_hunting")
         result = r.json()["data"]["result"]
         assert result["cases_created"] == 0
 
     @pytest.mark.asyncio
-    async def test_asset_hardening_creates_no_case(self, client):
+    async def test_asset_hardening_creates_no_case(self, auth_client):
         """基线失败不是安全事件,不建 Case"""
-        r = await client.post("/api/agents/proactive/asset_hardening")
+        r = await auth_client.post("/api/agents/proactive/asset_hardening")
         assert r.json()["data"]["result"]["cases_created"] == 0
 
 
@@ -258,7 +258,7 @@ class TestSchedulerLifecycle:
         await sched.shutdown_scheduler()
 
     @pytest.mark.asyncio
-    async def test_failed_run_recorded(self, client, monkeypatch):
+    async def test_failed_run_recorded(self, auth_client, monkeypatch):
         """Agent 抛异常时记录 failed 状态"""
         from app.agents.proactive import ThreatHuntingAgent
         from app.agents.scheduler import run_proactive_with_record
@@ -270,7 +270,7 @@ class TestSchedulerLifecycle:
         with pytest.raises(RuntimeError, match="scan exploded"):
             await run_proactive_with_record("threat_hunting", "manual")
 
-        runs = (await client.get("/api/agents/proactive/runs")).json()["data"]
+        runs = (await auth_client.get("/api/agents/proactive/runs")).json()["data"]
         failed = [x for x in runs if x["status"] == "failed"]
         assert failed
         assert "scan exploded" in failed[0]["error"]

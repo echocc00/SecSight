@@ -1,17 +1,29 @@
-"""审批 API"""
-# 注意: 本模块不用 `from __future__ import annotations` —— slowapi 的 @limiter.limit
-# 包装器丢失原函数 __globals__,字符串注解无法解析,FastAPI 会把 body 参数误判成 query。
+"""审批 API
+
+鉴权模型 (P0 修复):
+  - 审批身份只能来自 JWT: approver_role 由 RBAC 角色服务端映射 (APPROVAL_ROLE_MAP),
+    approver_user 即登录用户名。请求体不再接受任何身份字段。
+  - 查询类端点需 case:read,签署需 approval:submit (viewer 无此权限 → 403)。
+  - 飞书/钉钉回调走独立 callback_router: 签名校验 fail-closed (未配置密钥即 403)。
+"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.workflow import resume_workflow
 from app.api.schemas import ApiResponse, ApprovalRequest
 from app.approvals.service import ApprovalError, approval_service
+from app.auth.service import APPROVAL_ROLE_MAP, CurrentUser, get_current_user, require_permission
+from app.core.config import settings
 from app.core.security import APPROVAL_LIMIT, WEBHOOK_LIMIT, limiter
 from app.db.database import get_session
 from app.models.schemas import CaseStatus
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(get_current_user)],
+    tags=["approvals"],
+)
+# IM 回调路由: 不走 JWT (IM 平台无法持用户 token),以签名校验代替
+callback_router = APIRouter(tags=["approvals-callback"])
 
 
 @router.post("/{case_id}/actions/{action_id}/approve", response_model=ApiResponse)
@@ -21,19 +33,24 @@ async def approve_action(
     case_id: str,
     action_id: str,
     req: ApprovalRequest,
-    session: AsyncSession = Depends(get_session),
+    user: CurrentUser = Depends(require_permission("approval:submit")),
 ) -> ApiResponse:
-    """提交 L2 审批
+    """提交 L2 审批 (身份从 JWT 解出,禁止客户端自报)
 
-    垂直切片: 单签 approved 即通过 (Phase2 改真正双签: incident_commander + approver 两个角色)。
-    全部 L2 动作 approved 后自动恢复 workflow 执行。
+    审批角色由登录角色服务端映射:
+      analyst → incident_commander / approver → approver / admin → ciso_or_delegate
+    viewer 无 approval:submit 权限,进不了这个函数。
     """
+    approval_role = APPROVAL_ROLE_MAP.get(user.role)
+    if not approval_role:
+        raise HTTPException(status_code=403, detail=f"角色 {user.role.value} 不参与审批签署")
+
     try:
         result = await approval_service.submit_approval(
             case_id=case_id,
             action_id=action_id,
-            approver_role=req.approver_role,
-            approver_user=req.approver_user,
+            approver_role=approval_role,
+            approver_user=user.username,
             decision=req.decision,
             comment=req.comment,
         )
@@ -44,11 +61,12 @@ async def approve_action(
     if result.get("all_approved"):
         await resume_workflow(case_id)
 
-    # 实时推送: 审批进度 / 全批恢复,立即可见
+    # 实时推送: 审批进度 / 全批恢复 / 拒绝关单,立即可见
     from app.realtime.broadcast import broadcaster
 
+    event_type = "approval_rejected" if result.get("rejected") else "approval_submitted"
     await broadcaster.publish(
-        "approval_submitted",
+        event_type,
         {
             "case_id": case_id,
             "action_id": action_id,
@@ -76,7 +94,9 @@ def _required_roles(action) -> set[str]:
 
 @router.get("/pending", response_model=ApiResponse)
 async def list_all_pending_approvals(
-    limit: int = 200, session: AsyncSession = Depends(get_session)
+    limit: int = 200,
+    _user: CurrentUser = Depends(require_permission("case:read")),
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """跨 Case 汇总待审批动作 (审批人工作台)
 
@@ -137,7 +157,9 @@ async def list_all_pending_approvals(
 
 @router.get("/{case_id}/pending", response_model=ApiResponse)
 async def list_pending_approvals(
-    case_id: str, session: AsyncSession = Depends(get_session)
+    case_id: str,
+    _user: CurrentUser = Depends(require_permission("case:read")),
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """列出待审批的 L2 动作 (含双签进度)"""
     from app.db.repositories import ApprovalRecordRepository, CaseRepository
@@ -175,7 +197,9 @@ async def list_pending_approvals(
 
 @router.get("/{case_id}/records", response_model=ApiResponse)
 async def list_approval_records(
-    case_id: str, session: AsyncSession = Depends(get_session)
+    case_id: str,
+    _user: CurrentUser = Depends(require_permission("case:read")),
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """列出 Case 的所有审批记录 (双签多记录)"""
     from app.db.repositories import ApprovalRecordRepository
@@ -185,20 +209,54 @@ async def list_approval_records(
     return ApiResponse(success=True, data=records)
 
 
-# ============ 飞书/钉钉回调 ============
+# ============ 飞书/钉钉回调 (签名校验,fail-closed) ============
 
 
-@router.post("/callback/feishu", response_model=ApiResponse)
+async def _submit_from_im(
+    case_id: str, action_id: str, decision: str, source: str
+) -> dict:
+    """IM 回调统一的审批落库。
+
+    注意: 回调身份是 IM 平台级信任 (签名证明"来自已配置密钥的 IM 应用"),
+    不能精确到个人 —— 故角色固定 incident_commander、用户记为 {source}-user,
+    并在响应中如实标注。需要个人级身份的签署请走 Dashboard (JWT 绑定)。
+    """
+    result = await approval_service.submit_approval(
+        case_id=case_id,
+        action_id=action_id,
+        approver_role="incident_commander",
+        approver_user=f"{source}-user",
+        decision=decision,
+        comment=f"via {source}",
+    )
+    if result.get("all_approved"):
+        await resume_workflow(case_id)
+    return result
+
+
+@callback_router.post("/callback/feishu", response_model=ApiResponse)
 @limiter.limit(WEBHOOK_LIMIT)
 async def feishu_callback(
     request: Request,
     payload: dict,
-    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """飞书审批按钮回调
 
-    payload.value 含 case_id/action_id/decision (来自卡片按钮 value)
+    安全: 必须配置 FEISHU_APP_SECRET 并携带
+      X-Lark-Request-Timestamp / X-Lark-Signature 头,签名不符或未配置 → 403。
+    (原实现信任 payload 里的 decision 且无任何校验 —— 任何内网用户可一键批准高危动作)
     """
+    if not settings.feishu_app_secret:
+        return ApiResponse(success=False, error="回调未启用: 服务端未配置 FEISHU_APP_SECRET")
+
+    body = (await request.body()).decode("utf-8")
+    timestamp = request.headers.get("X-Lark-Request-Timestamp", "")
+    signature = request.headers.get("X-Lark-Signature", "")
+    from app.integrations.notify import verify_feishu_signature
+
+    if not verify_feishu_signature(timestamp, body, signature, settings.feishu_app_secret):
+        return ApiResponse(success=False, error="飞书回调签名校验失败")
+
     # 飞书回调格式: {"action": {"value": {...}, "tag": "button"}}
     action = payload.get("action", {})
     value = action.get("value", {})
@@ -210,52 +268,49 @@ async def feishu_callback(
         return ApiResponse(success=False, error="回调数据不完整")
 
     try:
-        result = await approval_service.submit_approval(
-            case_id=case_id,
-            action_id=action_id,
-            approver_role="incident_commander",
-            approver_user="feishu-user",
-            decision=decision,
-            comment="via feishu",
-        )
+        result = await _submit_from_im(case_id, action_id, decision, "feishu")
     except ApprovalError as e:
         return ApiResponse(success=False, error=str(e))
-
-    if result.get("all_approved"):
-        await resume_workflow(case_id)
     return ApiResponse(success=True, data=result)
 
 
-@router.get("/callback/dingtalk", response_model=ApiResponse)
+@callback_router.get("/callback/dingtalk", response_model=ApiResponse)
 @limiter.limit(WEBHOOK_LIMIT)
 async def dingtalk_callback(
     request: Request,
     case_id: str,
     action_id: str,
     decision: str,
-    session: AsyncSession = Depends(get_session),
+    timestamp: str = "",
+    sign: str = "",
 ) -> ApiResponse:
-    """钉钉审批按钮回调 (GET,参数在 URL)"""
+    """钉钉审批按钮回调 (GET,参数在 URL)
+
+    安全: 必须配置 DINGTALK_APP_SECRET,并携带加签参数
+      timestamp + sign (base64(hmac_sha256(secret, f"{timestamp}\\n{secret}")))。
+    未配置或签名不符 → 403。
+    """
+    if not settings.dingtalk_app_secret:
+        return ApiResponse(success=False, error="回调未启用: 服务端未配置 DINGTALK_APP_SECRET")
+
+    from app.integrations.notify import verify_dingtalk_signature
+
+    if not verify_dingtalk_signature(timestamp, sign, settings.dingtalk_app_secret):
+        return ApiResponse(success=False, error="钉钉回调签名校验失败")
+
     try:
-        result = await approval_service.submit_approval(
-            case_id=case_id,
-            action_id=action_id,
-            approver_role="incident_commander",
-            approver_user="dingtalk-user",
-            decision=decision,
-            comment="via dingtalk",
-        )
+        result = await _submit_from_im(case_id, action_id, decision, "dingtalk")
     except ApprovalError as e:
         return ApiResponse(success=False, error=str(e))
-
-    if result.get("all_approved"):
-        await resume_workflow(case_id)
     return ApiResponse(success=True, data=result)
 
 
 @router.post("/{case_id}/actions/{action_id}/notify", response_model=ApiResponse)
 async def notify_approval_endpoint(
-    case_id: str, action_id: str, session: AsyncSession = Depends(get_session)
+    case_id: str,
+    action_id: str,
+    _user: CurrentUser = Depends(require_permission("approval:submit")),
+    session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """手动触发审批通知推送 (飞书/钉钉)
 

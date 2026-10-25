@@ -8,6 +8,7 @@ import pytest
 
 from app.integrations.opensearch import OpenSearchClient, OpenSearchError
 from app.mock.alerts import xmrig_process_alert
+from app.models.schemas import Alert
 
 
 def _alert() -> Alert:

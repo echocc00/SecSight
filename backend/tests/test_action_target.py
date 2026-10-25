@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import pytest
 
 from app.agents.nodes import build_action_from_config, resolve_action_target
 from app.models.schemas import ActionType
@@ -174,9 +173,9 @@ class TestBuildActionMergesPlaybookParams:
 
 
 class TestEndToEndTargetPopulated:
-    async def test_injected_case_actions_have_targets(self, client):
+    async def test_injected_case_actions_have_targets(self, auth_client):
         """回归: 编排产出的 L2 动作必须带真实目标,不能是 {}"""
-        resp = await client.post(
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={
                 "alert_type": "xmrig_process",
@@ -185,7 +184,7 @@ class TestEndToEndTargetPopulated:
             },
         )
         case_id = resp.json()["data"]["case_id"]
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
 
         actionable = [
             a
@@ -196,13 +195,13 @@ class TestEndToEndTargetPopulated:
         for action in actionable:
             assert action["target"], f"{action['action_type']} target 为空"
 
-    async def test_isolate_target_matches_injected_host(self, client):
-        resp = await client.post(
+    async def test_isolate_target_matches_injected_host(self, auth_client):
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "tgt-host-2"},
         )
         case_id = resp.json()["data"]["case_id"]
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
 
         isolate = next(
             (a for a in case["proposed_actions"] if a["action_type"] == "isolate_host"),
@@ -211,26 +210,26 @@ class TestEndToEndTargetPopulated:
         assert isolate is not None
         assert isolate["target"]["hostname"] == "tgt-host-2"
 
-    async def test_pending_panel_shows_target(self, client):
+    async def test_pending_panel_shows_target(self, auth_client):
         """审批面板要能看出会影响哪台机器"""
-        await client.post(
+        await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "tgt-host-3"},
         )
-        items = (await client.get("/api/approvals/pending")).json()["data"]["items"]
+        items = (await auth_client.get("/api/approvals/pending")).json()["data"]["items"]
         isolate_items = [i for i in items if i["action_type"] == "isolate_host"]
         assert isolate_items
         assert isolate_items[0]["target"]
 
-    async def test_no_l2_action_left_with_empty_target(self, client):
+    async def test_no_l2_action_left_with_empty_target(self, auth_client):
         """回归: 任何需要审批的处置动作都不能是空 target"""
         for alert_type in ("xmrig_process", "lateral_movement", "ssh_bruteforce"):
-            await client.post(
+            await auth_client.post(
                 "/api/alerts/inject",
                 json={"alert_type": alert_type, "hostname": f"tgt-{alert_type}"},
             )
 
-        items = (await client.get("/api/approvals/pending")).json()["data"]["items"]
+        items = (await auth_client.get("/api/approvals/pending")).json()["data"]["items"]
         assert items
         empty = [
             (i["action_type"], i["case_id"])

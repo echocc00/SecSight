@@ -1,7 +1,6 @@
 """安全加固测试 — PII 脱敏 + CORS + 密钥校验"""
 from __future__ import annotations
 
-import pytest
 
 from app.core.security import (
     get_cors_origins,
@@ -56,7 +55,6 @@ class TestCorsOrigins:
         assert "*" in get_cors_origins()
 
     def test_prod_restricts_origins(self, monkeypatch):
-        import os
 
         from app.core import config as cfg
 

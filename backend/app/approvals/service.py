@@ -4,15 +4,16 @@
   - L2 动作需 incident_commander + approver 两个不同角色都 approved
   - 高危动作 (isolate_host/block_ip 等) 需 + ciso_or_delegate (三签)
   - 同角色重复审批被拒 (防同人刷)
-  - 任一 rejected → 该动作拒绝
+  - 同用户重复审批被拒 (防一人换角色名刷两签 —— 审批身份由 JWT 绑定后,
+    这道防线保证单账号无论如何拿不到两签)
+  - 任一 rejected → Case 关闭终态,不再吸收新签名,防止已闭环案件被"复活"重复处置
 """
 from __future__ import annotations
 
-from datetime import datetime
 
 from app.db.database import async_session
 from app.db.repositories import ApprovalRecordRepository, AuditLogRepository, CaseRepository
-from app.models.schemas import AutonomyLevel, CaseStatus
+from app.models.schemas import CaseStatus
 
 import structlog
 
@@ -23,6 +24,8 @@ DOUBLE_SIGN_ROLES = {"incident_commander", "approver"}
 # 高危三签 (整机隔离/全网封禁等)
 CRITICAL_ACTIONS = {"isolate_host", "block_ip", "block_domain", "freeze_account"}
 CRITICAL_TRIPLE_ROLES = {"incident_commander", "approver", "ciso_or_delegate"}
+# 终态案件: 不再接受任何审批 (防止已闭环案件被补签复活并重复执行处置)
+TERMINAL_CASE_STATUSES = {CaseStatus.resolved, CaseStatus.closed}
 
 
 class ApprovalError(Exception):
@@ -46,6 +49,11 @@ class ApprovalService:
             if not case:
                 raise ApprovalError("Case not found")
 
+            if case.status in TERMINAL_CASE_STATUSES:
+                raise ApprovalError(
+                    f"Case {case_id[:8]} 已闭环 ({case.status.value}),不接受新审批"
+                )
+
             action = next(
                 (a for a in case.proposed_actions if a.action_id == action_id), None
             )
@@ -58,11 +66,18 @@ class ApprovalService:
                 )
 
             record_repo = ApprovalRecordRepository(session)
+            records = await record_repo.list_by_action(case_id, action_id)
 
-            # 防同人重复: 同角色同 action 已审批过则拒
-            if await record_repo.has_role_approved(case_id, action_id, approver_role):
+            # 防同人重复 (角色维度): 同角色同 action 已审批过则拒
+            if any(r["approver_role"] == approver_role for r in records):
                 raise ApprovalError(
                     f"角色 {approver_role} 已审批过 action {action_id[:8]}"
+                )
+            # 防同人重复 (用户维度): 同一用户换角色名也不能签两次
+            if any(r["approver_user"] == approver_user for r in records):
+                raise ApprovalError(
+                    f"用户 {approver_user} 已审批过 action {action_id[:8]},"
+                    "一个账号只能签一票"
                 )
 
             # 记录审批
@@ -82,6 +97,22 @@ class ApprovalService:
                 case_id=case_id,
                 detail={"action_id": action_id, "role": approver_role, "comment": comment},
             )
+
+            # 拒绝终态: 任一角色拒绝 → Case 关闭,高危动作永不执行
+            if decision == "rejected":
+                await repo.update_status(case_id, CaseStatus.resolved)
+                log.warning(
+                    "approval.rejected_case_closed",
+                    case_id=case_id,
+                    action_id=action_id,
+                    role=approver_role,
+                )
+                return {
+                    "action_status": "rejected",
+                    "case_status": CaseStatus.resolved.value,
+                    "all_approved": False,
+                    "rejected": True,
+                }
 
             # 判定该 action 是否完成双签
             action_fully_approved = await self._check_action_fully_approved(

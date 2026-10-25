@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -41,6 +41,7 @@ PERMISSIONS: dict[Role, set[str]] = {
     },
     Role.ANALYST: {
         "case:read", "case:write", "alert:inject", "playbook:manage",
+        "approval:submit",  # analyst 即值班指挥官: 审批角色映射为 incident_commander
     },
     Role.APPROVER: {
         "case:read", "approval:submit", "execution:trigger",
@@ -58,6 +59,19 @@ class CurrentUser:
 
     def has_permission(self, perm: str) -> bool:
         return perm in PERMISSIONS.get(self.role, set())
+
+
+# RBAC 角色 → 审批角色 映射 (审批身份只能从 JWT 解出,绝不接受客户端自报)
+# 设计约束:
+#   - viewer 不持审批角色 → 无法参与签署 (403)
+#   - admin 固定映射 ciso_or_delegate,避免单人占多角色刷签
+#   - 双签需要 analyst + approver 两个不同账号,三签再加 admin —— 天然职责分离
+APPROVAL_ROLE_MAP: dict[Role, str | None] = {
+    Role.ADMIN: "ciso_or_delegate",
+    Role.ANALYST: "incident_commander",
+    Role.APPROVER: "approver",
+    Role.VIEWER: None,
+}
 
 
 def hash_password(password: str) -> str:
@@ -184,7 +198,12 @@ def authenticate_user(username: str, password: str) -> dict | None:
 
 
 async def authenticate_user_async(username: str, password: str) -> dict | None:
-    """DB 认证 (生产),失败降级内存字典"""
+    """DB 认证 (生产路径)
+
+    DB 异常时直接向上抛 —— 认证不允许静默降级:
+    回退到源码内置账号等于给"生产 DB 抖动"开一道公开口令的后门。
+    仅当部署显式声明 mock_mode (本地演示) 且非生产环境时,才允许降级 demo 用户。
+    """
     try:
         from app.db.database import async_session
         from app.db.repositories import UserRepository
@@ -198,8 +217,15 @@ async def authenticate_user_async(username: str, password: str) -> dict | None:
                     return user
             return None
     except Exception:
-        # DB 未就绪 → 降级内存字典
-        return authenticate_user(username, password)
+        if settings.mock_mode and settings.env != "production":
+            import structlog
+
+            structlog.get_logger().warning(
+                "auth.db_unavailable_fallback_demo",
+                hint="DB 异常,降级 demo 用户 (仅 mock_mode 允许)",
+            )
+            return authenticate_user(username, password)
+        raise
 
 
 def get_user(username: str) -> dict | None:

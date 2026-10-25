@@ -75,6 +75,26 @@ def rate_limit_exceeded_handler(request: Request, exc: Exception) -> Response:
     )
 
 
+# ============ Webhook 准入 ============
+
+
+async def verify_webhook_token(request: Request) -> None:
+    """webhook 共享密钥校验 (Wazuh/国产设备告警入口)
+
+    fail-closed: 未配置 WEBHOOK_TOKEN 时一律 403 —— 这些端点可触发全编排链路,
+    裸奔等于把"注入假告警"的遥控器交给内网任何人。
+    """
+    import hmac as _hmac
+
+    expected = settings.webhook_token
+    provided = request.headers.get("X-SecSight-Webhook-Token", "")
+    if not expected or not provided or not _hmac.compare_digest(expected, provided):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="webhook token 无效或未配置 (服务端需设置 SECSIGHT_WEBHOOK_TOKEN)",
+        )
+
+
 # ============ PII 脱敏 ============
 
 # 常见 PII 模式

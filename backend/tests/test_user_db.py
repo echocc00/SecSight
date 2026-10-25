@@ -4,11 +4,9 @@ from __future__ import annotations
 import pytest
 
 from app.auth.service import (
-    Role,
     authenticate_user,
     authenticate_user_async,
     hash_password,
-    verify_password,
 )
 from app.db.repositories import UserRepository
 
@@ -50,6 +48,13 @@ class TestUserRepository:
 
     @pytest.mark.asyncio
     async def test_seed_defaults_creates_four(self, db_session):
+        """conftest 已预置种子用户,先清空再验证 seed 语义"""
+        from sqlalchemy import delete
+
+        from app.db.models import UserModel
+
+        await db_session.execute(delete(UserModel))
+        await db_session.commit()
         repo = UserRepository(db_session)
         n = await repo.seed_defaults()
         assert n == 4  # admin/analyst/approver/viewer

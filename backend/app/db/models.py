@@ -55,7 +55,9 @@ class CaseModel(Base):
     enriched_context: Mapped[dict] = mapped_column(JSON, default=dict)
     judgment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     proposed_actions: Mapped[list] = mapped_column(JSON, default=list)
-    approvals: Mapped[dict] = mapped_column(JSON, default=dict)
+    # 审批数据只存 approval_records 表 (双签多记录)。
+    # 曾有 approvals JSON 列作为第二真相源,但从未被审批服务写入,
+    # checkpointer 路径误读它导致已批动作不执行 —— 已删除 (迁移 drop_case_approvals)。
     execution_log: Mapped[list] = mapped_column(JSON, default=list)
     evidence_pack_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     autonomy_level_default: Mapped[str] = mapped_column(String(8), default="L3")

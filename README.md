@@ -191,7 +191,28 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚀 v0.6.1 — OpenCTI 真实验证通过: 642 测试,覆盖率 87%+。OpenCTI 6.2 容器 (隔离网段) 真实联调 + compose 部署修复。
+🚀 v0.6.2 — **安全加固**:全站路由鉴权落地 + 审批身份 JWT 绑定 + 回调/Webhook 准入凭证。663 测试全绿,覆盖率 80% 门槛强制。
+
+**v0.6.2 新增 (P0/P1 安全修复,评审驱动)**:
+- **全站鉴权落地**: cases/playbooks/approvals/evidence/compliance/agents/knowledge 全部挂 JWT + 权限矩阵 (此前仅 auth/audit 有鉴权,其余端点裸奔);webhook 走 `WEBHOOK_TOKEN` 共享密钥 (fail-closed,未配置即 403)
+- **审批身份不可自报**: approver_role/approver_user 由服务端从 JWT 映射 (analyst→指挥官 / approver→审批人 / admin→CISO),请求体身份字段已删除;同用户同动作只能签一票 —— 此前匿名 3 条 curl 即可伪造双签/三签
+- **IM 回调签名校验**: 飞书 (X-Lark-Signature) / 钉钉 (加签) fail-closed,未配置密钥即拒绝 —— 此前签名函数写了但从未接线
+- **认证无静默降级**: DB 异常返回 503,不再回退源码内置账号 (仅显式 mock_mode 保留 demo 降级)
+- **审批终态**: 任一角色拒绝 → Case 关闭不再吸收签名;已闭环案件拒绝再签 (堵"复活重复处置");checkpointer 路径审批判定改读 ApprovalRecord 表 (修复已批动作不执行)
+- **双真相源清理**: 删除 `case.approvals` JSON 列 (含 alembic 迁移),审批唯一真相源 = approval_records 表
+- **/health 收敛**: 只留组件连通性,执行能力/限流/调度细节移到需鉴权的 `/api/status`;种子密码不再写日志 (生产写本地文件一次)
+- **前端**: nginx 补 WebSocket 升级头 (修复生产部署实时推送必挂)、审批面板按登录身份展示 (去掉可自报的角色下拉)、ErrorBoundary、Case 加载错误态
+- **剧本模型补字段**: evidence_pack/compliance 顶层配置不再被 Pydantic 静默丢弃 (等保上报参数生效)
+
+> ⚠️ **升级注意**: 部署需在 .env 配置 `WEBHOOK_TOKEN` (Wazuh/国产设备推送) 与
+> `FEISHU_APP_SECRET`/`DINGTALK_APP_SECRET` (IM 审批回调),否则对应端点返回 403 —— 这是刻意的 fail-closed。
+> Wazuh 主动推送需在 integration 配置 header: `X-SecSight-Webhook-Token: <WEBHOOK_TOKEN>`。
+
+> 📋 **口径校准 (实事求是)**: 22 个剧本 YAML 中,Phase1 6 个 + Phase2 6 个为完整实现,
+> 其余 10 个为骨架 (部分触发器为占位);Shuffle workflow 骨架 4/8;知识库 L0/L1 为薄层起步。
+> README/架构图为设计目标视图,实际能力以 `/api/status` (需鉴权) 与启动警告输出为准。
+
+**v0.6.1 — OpenCTI 真实验证通过: 642 测试,覆盖率 87%+。OpenCTI 6.2 容器 (隔离网段) 真实联调 + compose 部署修复。**
 
 **v0.6.1 新增 (OpenCTI 容器真实验证)**:
 - **OpenCTI 6.2 真实联调**: 容器 healthy + /health 报 opencti: ok + live 测试 2/2 + 注入 E2E 三源情报真实查询 (AbuseIPDB/OTX/OpenCTI 并行,不 import pycti)

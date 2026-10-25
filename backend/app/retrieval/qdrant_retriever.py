@@ -9,11 +9,9 @@
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from pathlib import Path
-from typing import Any
 
 import structlog
 from qdrant_client import AsyncQdrantClient

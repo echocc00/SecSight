@@ -1,7 +1,13 @@
-"""Wazuh webhook 接收器测试 — 真实 Wazuh alert JSON → Alert → workflow"""
+"""Wazuh webhook 接收器测试 — 真实 Wazuh alert JSON → Alert → workflow
+
+P0 后 webhook 不走 JWT,要求 X-SecSight-Webhook-Token 共享密钥 (缺失/错误 → 403);
+查 Case 详情等业务端点需 JWT (auth_client)。
+"""
 from __future__ import annotations
 
 import pytest
+
+from tests.conftest import WEBHOOK_TOKEN
 
 
 # 真实 Wazuh alert JSON 样本 (来自 Wazuh alerts.json)
@@ -81,8 +87,11 @@ class TestWazuhAlertParser:
 
 class TestWazuhWebhookEndpoint:
     @pytest.mark.asyncio
-    async def test_webhook_creates_case_and_matches_playbook(self, client):
-        r = await client.post("/api/alerts/wazuh-webhook", json=WAZUH_ALERT)
+    async def test_webhook_creates_case_and_matches_playbook(self, auth_client):
+        r = await auth_client.post(
+            "/api/alerts/wazuh-webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+            json=WAZUH_ALERT)
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["source"] == "wazuh_webhook"
@@ -91,38 +100,47 @@ class TestWazuhWebhookEndpoint:
         assert data["playbook_id"] == "pb_cryptominer_v1"
 
     @pytest.mark.asyncio
-    async def test_webhook_case_has_alert_with_wazuh_source(self, client):
-        r = await client.post("/api/alerts/wazuh-webhook", json=WAZUH_ALERT)
+    async def test_webhook_case_has_alert_with_wazuh_source(self, auth_client):
+        r = await auth_client.post(
+            "/api/alerts/wazuh-webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+            json=WAZUH_ALERT)
         case_id = r.json()["data"]["case_id"]
 
-        r = await client.get(f"/api/cases/{case_id}")
+        r = await auth_client.get(f"/api/cases/{case_id}")
         case = r.json()["data"]
         assert case["alerts"][0]["source"] == "wazuh"
         assert case["alerts"][0]["rule_id"] == "5710"
 
     @pytest.mark.asyncio
-    async def test_webhook_triggers_workflow_to_pending(self, client):
-        r = await client.post("/api/alerts/wazuh-webhook", json=WAZUH_ALERT)
+    async def test_webhook_triggers_workflow_to_pending(self, auth_client):
+        r = await auth_client.post(
+            "/api/alerts/wazuh-webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+            json=WAZUH_ALERT)
         case_id = r.json()["data"]["case_id"]
 
-        r = await client.get(f"/api/cases/{case_id}")
+        r = await auth_client.get(f"/api/cases/{case_id}")
         case = r.json()["data"]
         # xmrig (L2) → 应到 pending_approval
         assert case["status"] == "pending_approval"
         assert case["judgment"] is not None
 
     @pytest.mark.asyncio
-    async def test_webhook_handles_minimal_alert(self, client):
+    async def test_webhook_handles_minimal_alert(self, auth_client):
         """缺字段的告警仍能处理"""
         minimal = {"rule": {"id": "999", "level": 3, "description": "unknown event"}}
-        r = await client.post("/api/alerts/wazuh-webhook", json=minimal)
+        r = await auth_client.post(
+            "/api/alerts/wazuh-webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+            json=minimal)
         assert r.status_code == 200
         assert r.json()["success"] is True
         # 无匹配剧本 → playbook_id 为 None
         assert r.json()["data"]["playbook_id"] is None
 
     @pytest.mark.asyncio
-    async def test_webhook_bruteforce_alert(self, client):
+    async def test_webhook_bruteforce_alert(self, auth_client):
         """SSH 暴破告警应匹配 bruteforce 剧本"""
         bruteforce = {
             "rule": {
@@ -134,6 +152,25 @@ class TestWazuhWebhookEndpoint:
             "data": {"srcip": "45.10.0.1"},
             "agent": {"name": "web-prod-01", "id": "003"},
         }
-        r = await client.post("/api/alerts/wazuh-webhook", json=bruteforce)
+        r = await auth_client.post(
+            "/api/alerts/wazuh-webhook",
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+            json=bruteforce)
         data = r.json()["data"]
         assert data["playbook_id"] == "pb_bruteforce_v1"
+
+    @pytest.mark.asyncio
+    async def test_webhook_without_token_rejected_403(self, client):
+        """缺失共享密钥 → 403 (fail-closed,不再裸奔)"""
+        r = await client.post("/api/alerts/wazuh-webhook", json=WAZUH_ALERT)
+        assert r.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_webhook_with_wrong_token_rejected_403(self, client):
+        """错误共享密钥 → 403"""
+        r = await client.post(
+            "/api/alerts/wazuh-webhook",
+            json=WAZUH_ALERT,
+            headers={"X-SecSight-Webhook-Token": "wrong-token"},
+        )
+        assert r.status_code == 403

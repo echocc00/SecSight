@@ -50,9 +50,12 @@ class TestPermissionMatrix:
         assert "approval:submit" in PERMISSIONS[Role.APPROVER]
         assert "alert:inject" not in PERMISSIONS[Role.APPROVER]
 
-    def test_analyst_can_inject_not_approve(self):
+    def test_analyst_can_inject_and_sign_as_commander(self):
+        """analyst = 值班指挥官: 可注入告警,审批角色映射为 incident_commander
+        (v0.6.2 起 analyst 持 approval:submit;viewer 仍不可签)"""
         assert "alert:inject" in PERMISSIONS[Role.ANALYST]
-        assert "approval:submit" not in PERMISSIONS[Role.ANALYST]
+        assert "approval:submit" in PERMISSIONS[Role.ANALYST]
+        assert "approval:submit" not in PERMISSIONS[Role.VIEWER]
 
 
 class TestAuthenticateUser:
@@ -71,16 +74,25 @@ class TestAuthenticateUser:
 class TestRequirePermission:
     @pytest.mark.asyncio
     async def test_admin_passes_user_manage(self):
-        token = create_access_token("admin", Role.ADMIN)
-        checker = require_permission("user:manage")
-        # 模拟依赖注入
-        from app.auth.service import get_current_user
-
-        # 直接调用 checker 需要当前用户,这里验证权限逻辑
+        """require_permission 依赖链真实走一遍: admin 可过 user:manage"""
         from app.auth.service import CurrentUser
 
-        user = CurrentUser("admin", Role.ADMIN)
-        assert user.has_permission("user:manage") is True
+        checker = require_permission("user:manage")
+        user = await checker(CurrentUser("admin", Role.ADMIN))
+        assert user.username == "admin"
+
+    @pytest.mark.asyncio
+    async def test_viewer_blocked_from_manage(self):
+        """require_permission 依赖链: viewer 无 user:manage → 403"""
+        import pytest as _pytest
+        from fastapi import HTTPException
+
+        from app.auth.service import CurrentUser
+
+        checker = require_permission("user:manage")
+        with _pytest.raises(HTTPException) as exc_info:
+            await checker(CurrentUser("viewer", Role.VIEWER))
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_viewer_blocked_from_inject(self):

@@ -137,9 +137,14 @@ class TestEmbeddingStatus:
         get_embedding_provider()
         assert embedding_status()["degraded"] is True
 
-    async def test_health_exposes_embedding(self, client):
+    async def test_embedding_moved_off_health(self, client):
+        """v0.6.2 /health 信息收敛: embedding 状态移到需鉴权的 /api/status"""
+        from tests.conftest import login_headers
+
         resp = await client.get("/health")
-        assert "embedding" in resp.json()
+        assert "embedding" not in resp.json()
+        resp2 = await client.get("/api/status", headers=await login_headers("admin"))
+        assert "embedding" in resp2.json()
 
 
 class TestAPIEmbedding:

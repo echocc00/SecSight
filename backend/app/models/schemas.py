@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -129,7 +129,8 @@ class Case(BaseModel):
     enriched_context: dict[str, Any] = Field(default_factory=dict)
     judgment: JudgmentReport | None = None
     proposed_actions: list[Action] = Field(default_factory=list)
-    approvals: dict[str, ApprovalRecord] = Field(default_factory=dict)
+    # 审批数据不在 Case 上 —— 唯一真相源是 approval_records 表
+    # (ApprovalRecordRepository)。旧 approvals dict 从未被填充,已删除。
     execution_log: list[ExecutionStep] = Field(default_factory=list)
     evidence_pack_id: str | None = None
     autonomy_level_default: AutonomyLevel = AutonomyLevel.L3

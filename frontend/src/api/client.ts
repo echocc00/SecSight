@@ -4,6 +4,7 @@ import { disconnect as disconnectWS, connect as connectWS } from "../lib/ws";
 const TOKEN_KEY = "secsight_token";
 const REFRESH_KEY = "secsight_refresh";
 const ROLE_KEY = "secsight_role";
+const APPROVAL_ROLE_KEY = "secsight_approval_role";
 
 const client = axios.create({
   baseURL: "/api",
@@ -23,6 +24,7 @@ function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_KEY);
   localStorage.removeItem(ROLE_KEY);
+  localStorage.removeItem(APPROVAL_ROLE_KEY);
 }
 
 function redirectToLogin() {
@@ -101,7 +103,26 @@ export const auth = {
     clearSession();
     window.location.href = "/login";
   },
-  getMe: () => client.get<ApiResponse>("/auth/me").then((r) => r.data.data),
+  getMe: () =>
+    client
+      .get<ApiResponse<{ username: string; role: string; approval_role: string | null }>>(
+        "/auth/me"
+      )
+      .then((r) => {
+        // 审批角色由服务端从 JWT 映射 (viewer 为 null),前端只负责展示与禁用
+        if (r.data.data?.approval_role !== undefined) {
+          localStorage.setItem(
+            APPROVAL_ROLE_KEY,
+            r.data.data.approval_role ?? ""
+          );
+        }
+        return r.data.data;
+      }),
+  // 服务端映射的审批角色: incident_commander | approver | ciso_or_delegate | null
+  getApprovalRole: () => {
+    const v = localStorage.getItem(APPROVAL_ROLE_KEY);
+    return v === null || v === "" ? null : v;
+  },
   getRole: () => localStorage.getItem(ROLE_KEY),
   isLoggedIn: () => !!localStorage.getItem(TOKEN_KEY),
 };
@@ -153,10 +174,11 @@ export const api = {
       .get<ApiResponse<{ count: number; items: any[] }>>("/approvals/pending")
       .then((r) => r.data.data),
 
+  // 审批身份由服务端从 JWT 解出,前端只传决策与意见
   approveAction: (
     caseId: string,
     actionId: string,
-    payload: { approver_role: string; approver_user: string; decision: string; comment?: string }
+    payload: { decision: string; comment?: string }
   ) =>
     client
       .post<ApiResponse>(`/approvals/${caseId}/actions/${actionId}/approve`, payload)

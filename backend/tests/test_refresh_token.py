@@ -1,7 +1,6 @@
 """Refresh Token 闭环 — 轮换 / 吊销 / 类型隔离 / 种子密码"""
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 
 
@@ -175,22 +174,40 @@ class TestLogout:
 
 
 class TestSeedPassword:
-    async def test_production_generates_random_password(self, monkeypatch):
-        """生产未配置 SEED_USER_PASSWORD 时不能落到公开的默认口令"""
+    @staticmethod
+    async def _clear_users() -> None:
+        """conftest 已预置种子用户,测 seed_defaults 语义前先清空"""
+        from sqlalchemy import delete
+
+        from app.db.database import async_session
+        from app.db.models import UserModel
+
+        async with async_session() as session:
+            await session.execute(delete(UserModel))
+            await session.commit()
+
+    async def test_production_generates_random_password(self, monkeypatch, tmp_path):
+        """生产未配置 SEED_USER_PASSWORD 时不能落到公开的默认口令;
+        随机口令写本地文件 (不进日志)"""
         from app.auth.service import verify_password
         from app.core import config
         from app.db.database import async_session
         from app.db.repositories import UserRepository
 
+        monkeypatch.chdir(tmp_path)  # seed 文件写入 cwd,隔离到 tmp
         monkeypatch.setattr(config.settings, "env", "production")
         monkeypatch.setattr(config.settings, "seed_user_password", "")
 
+        await self._clear_users()
         async with async_session() as session:
             created = await UserRepository(session).seed_defaults()
             assert created == 4
             user = await UserRepository(session).get_by_username("admin")
 
         assert not verify_password("ChangeMe_123!", user["hashed_password"])
+        seed_file = tmp_path / ".seed_password"
+        assert seed_file.exists(), "随机口令必须写文件供运维取用 (不进日志)"
+        assert "admin:" in seed_file.read_text(encoding="utf-8")
 
     async def test_configured_password_used(self, monkeypatch):
         from app.auth.service import verify_password
@@ -198,6 +215,7 @@ class TestSeedPassword:
         from app.db.database import async_session
         from app.db.repositories import UserRepository
 
+        await self._clear_users()
         monkeypatch.setattr(config.settings, "seed_user_password", "Custom_Pass_9!")
 
         async with async_session() as session:
@@ -210,6 +228,7 @@ class TestSeedPassword:
         from app.db.database import async_session
         from app.db.repositories import UserRepository
 
+        await self._clear_users()
         async with async_session() as session:
             repo = UserRepository(session)
             assert await repo.seed_defaults() == 4

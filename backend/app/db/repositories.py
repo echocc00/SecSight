@@ -14,7 +14,6 @@ from app.db.models import (
     AuditLogModel,
     CaseModel,
     EvidencePackModel,
-    PlaybookRunModel,
     ProactiveRunModel,
     RefreshTokenModel,
     UserModel,
@@ -22,7 +21,6 @@ from app.db.models import (
 from app.models.schemas import (
     Action,
     Alert,
-    ApprovalRecord,
     AutonomyLevel,
     Case,
     CaseStatus,
@@ -67,7 +65,6 @@ class CaseRepository:
             enriched_context=case.enriched_context,
             judgment=case.judgment.model_dump(mode="json") if case.judgment else None,
             proposed_actions=[a.model_dump(mode="json") for a in case.proposed_actions],
-            approvals={k: v.model_dump(mode="json") for k, v in case.approvals.items()},
             execution_log=[e.model_dump(mode="json") for e in case.execution_log],
             evidence_pack_id=case.evidence_pack_id,
             autonomy_level_default=case.autonomy_level_default.value,
@@ -120,14 +117,9 @@ class CaseRepository:
             model.updated_at = datetime.utcnow()
             await self.session.commit()
 
-    async def add_approval(self, case_id: str, approval: ApprovalRecord) -> None:
-        model = await self.session.get(CaseModel, case_id)
-        if model:
-            approvals = dict(model.approvals or {})
-            approvals[approval.action_id] = approval.model_dump(mode="json")
-            model.approvals = approvals
-            model.updated_at = datetime.utcnow()
-            await self.session.commit()
+    # add_approval 已删除: 审批记录唯一真相源是 ApprovalRecordRepository
+    # (双签多记录)。旧的 case.approvals JSON 列从未被审批链路填充,
+    # 读取它会漏掉全部已签批动作 (AGENTS.md §5 曾记录过这个 bug)。
 
     async def append_execution(self, case_id: str, step: ExecutionStep) -> None:
         model = await self.session.get(CaseModel, case_id)
@@ -263,10 +255,6 @@ class CaseRepository:
             enriched_context=model.enriched_context or {},
             judgment=JudgmentReport(**model.judgment) if model.judgment else None,
             proposed_actions=[Action(**a) for a in (model.proposed_actions or [])],
-            approvals={
-                k: ApprovalRecord(**v)
-                for k, v in (model.approvals or {}).items()
-            },
             execution_log=[ExecutionStep(**e) for e in (model.execution_log or [])],
             evidence_pack_id=model.evidence_pack_id,
             autonomy_level_default=AutonomyLevel(model.autonomy_level_default),
@@ -558,8 +546,8 @@ class UserRepository:
         """种子默认用户 (首次启动),返回创建数
 
         密码来源优先级: SEED_USER_PASSWORD > 开发默认值 > 随机生成。
-        生产未配置时生成随机密码并写日志一次 —— 绝不能让所有部署共用同一
-        个已进公开仓库的默认口令。
+        生产未配置时生成随机密码写本地文件一次 —— 绝不能让所有部署共用同一
+        个已进公开仓库的默认口令,也绝不能把明文口令写进日志 (日志会被采集留存)。
         """
         import secrets
 
@@ -596,10 +584,15 @@ class UserRepository:
             created += 1
 
         if created and generated:
+            # 随机口令不进日志 —— 写本地文件一次,运维读文件后删除
+            import pathlib
+
+            seed_file = pathlib.Path(".seed_password")
+            seed_file.write_text(f"admin: {password}\n", encoding="utf-8")
             structlog.get_logger().warning(
                 "user.seed.random_password_generated",
-                password=password,
-                hint="立即登录改密;此口令只打印这一次,未配置 SEED_USER_PASSWORD",
+                password_file=str(seed_file.resolve()),
+                hint="管理员初始口令已写入上述文件 (未进日志),登录改密后请删除",
             )
         return created
 
@@ -680,18 +673,8 @@ class ApprovalRecordRepository:
             for m in result.scalars()
         ]
 
-    async def has_role_approved(
-        self, case_id: str, action_id: str, role: str
-    ) -> bool:
-        """检查指定角色是否已 approved 该动作"""
-        stmt = select(ApprovalRecordModel).where(
-            ApprovalRecordModel.case_id == case_id,
-            ApprovalRecordModel.action_id == action_id,
-            ApprovalRecordModel.approver_role == role,
-            ApprovalRecordModel.decision == "approved",
-        )
-        result = await self.session.execute(stmt)
-        return result.scalars().first() is not None
+    # has_role_approved 已删除: 服务层用 list_by_action 一次取全量记录,
+    # 同时做同角色/同用户防重与决策判定,避免多次往返
 
     async def count_approvals(self, case_id: str, action_id: str) -> int:
         """统计 approved 数量 (双签判定)"""

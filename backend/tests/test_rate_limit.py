@@ -1,7 +1,11 @@
-"""速率限制落地验证 — 429 触发 / 端点独立配额 / 配置暴露"""
+"""速率限制落地验证 — 429 触发 / 端点独立配额 / 配置暴露
+
+P0 后: login 限流仍走裸 client;其余限流端点需携带对应凭证
+(JWT 登录头 / webhook 共享密钥),否则 401/403 抢在 429 之前。
+health 不再暴露 rate_limit 配置,断言迁移到需鉴权的 /api/status。
+"""
 from __future__ import annotations
 
-import pytest
 
 from app.core.security import (
     APPROVAL_LIMIT,
@@ -11,6 +15,7 @@ from app.core.security import (
     WEBHOOK_LIMIT,
     rate_limit_config,
 )
+from tests.conftest import WEBHOOK_TOKEN, login_headers
 
 
 def _quota(limit: str) -> int:
@@ -42,8 +47,9 @@ class TestRateLimitConfigReport:
         assert cfg["storage"] == "memory"
         assert cfg["distributed"] is False
 
-    async def test_health_exposes_rate_limit(self, client):
-        resp = await client.get("/health")
+    async def test_status_exposes_rate_limit(self, auth_client):
+        """rate_limit 配置已从公开 /health 收敛到需鉴权的 /api/status (case:read 即可)"""
+        resp = await auth_client.get("/api/status")
         assert resp.status_code == 200
         assert "rate_limit" in resp.json()
 
@@ -74,26 +80,35 @@ class TestLoginRateLimit:
 
 class TestSearchRateLimit:
     async def test_search_has_own_quota(self, client, rate_limiter):
-        """检索配额独立于登录配额: 打满登录不影响检索"""
+        """检索配额独立于登录配额: 打满登录不影响检索 (检索需 JWT)"""
+        # 先登录再打满 login 配额,否则这里会先撞上 login 限流
+        headers = await login_headers("admin")
         for _ in range(_quota(LOGIN_LIMIT) + 1):
             await client.post(
                 "/api/auth/login", json={"username": "x", "password": "y"}
             )
-        resp = await client.get("/api/alerts/search", params={"q": "xmrig"})
+        resp = await client.get(
+            "/api/alerts/search", params={"q": "xmrig"}, headers=headers
+        )
         assert resp.status_code == 200
 
     async def test_429_after_search_quota(self, client, rate_limiter):
         quota = _quota(SEARCH_LIMIT)
+        headers = await login_headers("admin")
         for _ in range(quota):
-            resp = await client.get("/api/alerts/search", params={"q": "xmrig"})
+            resp = await client.get(
+                "/api/alerts/search", params={"q": "xmrig"}, headers=headers
+            )
             assert resp.status_code == 200
-        blocked = await client.get("/api/alerts/search", params={"q": "xmrig"})
+        blocked = await client.get(
+            "/api/alerts/search", params={"q": "xmrig"}, headers=headers
+        )
         assert blocked.status_code == 429
 
 
 class TestWebhookRateLimit:
     async def test_webhook_quota_not_hit_by_normal_burst(self, client, rate_limiter):
-        """webhook 600/min: 连打 20 次不应被限 (真实告警风暴场景)"""
+        """webhook 600/min: 连打 20 次不应被限 (真实告警风暴场景,需共享密钥头)"""
         payload = {
             "timestamp": "2026-01-01T00:00:00Z",
             "rule": {"id": "100001", "level": 10, "description": "test", "groups": []},
@@ -102,5 +117,9 @@ class TestWebhookRateLimit:
             "full_log": "test",
         }
         for _ in range(20):
-            resp = await client.post("/api/alerts/wazuh-webhook", json=payload)
+            resp = await client.post(
+                "/api/alerts/wazuh-webhook",
+                json=payload,
+                headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+            )
             assert resp.status_code != 429

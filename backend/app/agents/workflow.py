@@ -27,8 +27,8 @@ from app.agents.nodes import (
     update_case_node,
 )
 from app.db.database import async_session
-from app.db.repositories import CaseRepository
-from app.models.schemas import AutonomyLevel, CaseStatus
+from app.db.repositories import ApprovalRecordRepository, CaseRepository
+from app.models.schemas import AutonomyLevel
 
 import structlog
 
@@ -343,18 +343,27 @@ async def trigger_workflow_checkpointer(case_id: str, playbook_id: str | None) -
 async def resume_workflow_checkpointer(case_id: str) -> None:
     """checkpointer 模式: 从 checkpoint 恢复,继续 execute → update_case"""
     # 同步 DB 的 approval_status 到 state
+    # 审批真相源是 ApprovalRecord 表 (与两段式路径一致)。曾读 case.approvals
+    # dict —— 该字段从未被审批服务填充,导致已签批动作被判 pending → 永不执行。
     async with async_session() as session:
         repo = CaseRepository(session)
         case = await repo.get(case_id)
         if not case:
             return
-        approval_status = {}
+        record_repo = ApprovalRecordRepository(session)
+        approval_status: dict[str, str] = {}
         for action in case.proposed_actions:
-            if action.approval_required:
-                approval = case.approvals.get(action.action_id)
-                approval_status[action.action_id] = (
-                    approval.decision if approval else "pending"
-                )
+            if not action.approval_required:
+                continue
+            records = await record_repo.list_by_action(case_id, action.action_id)
+            if any(r["decision"] == "rejected" for r in records):
+                approval_status[action.action_id] = "rejected"
+            elif await record_repo.is_action_approved(
+                case.case_id, action.action_id, action
+            ):
+                approval_status[action.action_id] = "approved"
+            else:
+                approval_status[action.action_id] = "pending"
 
     wf = await get_checkpointer_workflow()
     config = {"configurable": {"thread_id": case_id}}

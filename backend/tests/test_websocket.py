@@ -2,11 +2,29 @@
 
 starlette TestClient 支持 websocket_connect;事件触发(HTTP)与 WS 连接
 在同一 TestClient portal 事件循环内,跨循环问题不存在。
+
+P0 后: access token 用种子账号 (admin/analyst/approver/viewer + ChangeMe_123!)
+经 /api/auth/login 获取;所有业务 HTTP 调用 (inject/pending/approve) 须带 JWT 头,
+审批签署身份来自 JWT / IM 回调 (与 conftest.sign_approval 同一映射,同步版)。
 """
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
+
+from app.integrations.notify import compute_callback_signature
+from tests.conftest import DINGTALK_APP_SECRET
+
+TEST_PASSWORD = "ChangeMe_123!"
+
+# 审批角色 → RBAC 登录角色 (与服务端 APPROVAL_ROLE_MAP 逆映射一致)
+APPROVAL_ROLE_LOGIN = {
+    "incident_commander": "analyst",
+    "approver": "approver",
+    "ciso_or_delegate": "admin",
+}
 
 
 @pytest.fixture
@@ -19,11 +37,53 @@ def ws_client():
 
 
 def _token(client) -> str:
+    """种子账号登录拿 access token (WS 握手用 query token)"""
     resp = client.post(
-        "/api/auth/login", json={"username": "admin", "password": "ChangeMe_123!"}
+        "/api/auth/login", json={"username": "admin", "password": TEST_PASSWORD}
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["access_token"]
+
+
+def _login_headers(client, role: str = "admin") -> dict:
+    resp = client.post(
+        "/api/auth/login", json={"username": role, "password": TEST_PASSWORD}
+    )
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+def _dingtalk_params() -> dict:
+    """钉钉加签 query 参数 (签名内容 = timestamp + 换行 + secret 自身)"""
+    ts = str(int(time.time()))
+    return {
+        "timestamp": ts,
+        "sign": compute_callback_signature(ts, DINGTALK_APP_SECRET, DINGTALK_APP_SECRET),
+    }
+
+
+def _sign(client, case_id: str, action_id: str, approval_role: str) -> dict:
+    """同步版签署 (TestClient 不能 await): 与 conftest.sign_approval 同一映射"""
+    if approval_role == "incident_commander":
+        # analyst 无 approval:submit 权限,incident_commander 签名走钉钉 IM 回调
+        resp = client.get(
+            "/api/approvals/callback/dingtalk",
+            params={
+                "case_id": case_id,
+                "action_id": action_id,
+                "decision": "approved",
+                **_dingtalk_params(),
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+    resp = client.post(
+        f"/api/approvals/{case_id}/actions/{action_id}/approve",
+        json={"decision": "approved", "comment": "ws test"},
+        headers=_login_headers(client, APPROVAL_ROLE_LOGIN[approval_role]),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
 
 
 class TestWSAuth:
@@ -41,7 +101,7 @@ class TestWSAuth:
     def test_refresh_token_rejected(self, ws_client):
         """refresh token 不能握手,必须 access token"""
         login = ws_client.post(
-            "/api/auth/login", json={"username": "admin", "password": "ChangeMe_123!"}
+            "/api/auth/login", json={"username": "admin", "password": TEST_PASSWORD}
         ).json()
         with pytest.raises(Exception):
             with ws_client.websocket_connect(
@@ -60,10 +120,12 @@ class TestWSAuth:
 class TestBroadcastEndToEnd:
     def test_case_created_pushed_to_ws(self, ws_client):
         token = _token(ws_client)
+        headers = _login_headers(ws_client)
         with ws_client.websocket_connect(f"/api/ws/events?token={token}") as ws:
             resp = ws_client.post(
                 "/api/alerts/inject",
                 json={"alert_type": "xmrig_process", "hostname": "ws-case-1"},
+                headers=headers,
             )
             assert resp.status_code == 200
             case_id = resp.json()["data"]["case_id"]
@@ -76,22 +138,23 @@ class TestBroadcastEndToEnd:
 
     def test_approval_submitted_pushed(self, ws_client):
         token = _token(ws_client)
+        headers = _login_headers(ws_client)
         inject = ws_client.post(
             "/api/alerts/inject",
             json={"alert_type": "data_exfiltration", "hostname": "ws-approval-1"},
+            headers=headers,
         ).json()["data"]["case_id"]
-        pending = ws_client.get(f"/api/approvals/{inject}/pending").json()["data"]
+        pending = ws_client.get(
+            f"/api/approvals/{inject}/pending", headers=headers
+        ).json()["data"]
         assert pending, "应存在待审批动作"
 
         with ws_client.websocket_connect(f"/api/ws/events?token={token}") as ws:
             target = pending[0]
             resp = ws_client.post(
                 f"/api/approvals/{inject}/actions/{target['action_id']}/approve",
-                json={
-                    "approver_role": target["required_roles"][0],
-                    "approver_user": "u1",
-                    "decision": "approved",
-                },
+                json={"decision": "approved", "comment": "ws test"},
+                headers=_login_headers(ws_client, "approver"),
             )
             assert resp.status_code == 200
 
@@ -104,25 +167,22 @@ class TestBroadcastEndToEnd:
     def test_execution_step_and_resolved_pushed_after_full_approval(self, ws_client):
         """全批 → 恢复执行 → 时间线每步 execution_step + 最终 case_resolved"""
         token = _token(ws_client)
+        headers = _login_headers(ws_client)
         inject = ws_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "ws-exec-1"},
+            headers=headers,
         ).json()["data"]["case_id"]
-        pending = ws_client.get(f"/api/approvals/{inject}/pending").json()["data"]
+        pending = ws_client.get(
+            f"/api/approvals/{inject}/pending", headers=headers
+        ).json()["data"]
 
         with ws_client.websocket_connect(f"/api/ws/events?token={token}") as ws:
-            # 全批全部动作
+            # 全批全部动作 (每角色按其映射的签署路径)
             for item in pending:
                 for role in item["required_roles"]:
-                    resp = ws_client.post(
-                        f"/api/approvals/{inject}/actions/{item['action_id']}/approve",
-                        json={
-                            "approver_role": role,
-                            "approver_user": f"{role}-u",
-                            "decision": "approved",
-                        },
-                    )
-                    assert resp.status_code == 200
+                    resp = _sign(ws_client, inject, item["action_id"], role)
+                    assert resp["success"] is True, resp
 
             # 收集事件直到 case_resolved (默认模式 workflow 同步跑完)
             seen_types: set[str] = set()
@@ -145,6 +205,7 @@ class TestBroadcastEndToEnd:
     def test_disconnect_does_not_break_broadcast(self, ws_client):
         """一个客户端断开不应影响后续广播"""
         token = _token(ws_client)
+        headers = _login_headers(ws_client)
         # 连一个,主动断开
         with ws_client.websocket_connect(f"/api/ws/events?token={token}") as ws:
             ws.send_text("ping")
@@ -153,6 +214,7 @@ class TestBroadcastEndToEnd:
             ws_client.post(
                 "/api/alerts/inject",
                 json={"alert_type": "xmrig_process", "hostname": "ws-disconnect-1"},
+                headers=headers,
             )
             event = ws.receive_json()
             assert event["type"] == "case_created"

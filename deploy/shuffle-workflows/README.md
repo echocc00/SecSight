@@ -12,7 +12,7 @@ Shuffle Workflow 的 ID 由 Shuffle 实例生成,无法预先硬编码。**未�
 ⚠️ ENABLE_SHUFFLE=true 但以下动作无 workflow_id 配置,将降级 MockExecutor: isolate_host, block_ip, ...
 ```
 
-也可查 `GET /health` 的 `execution` 字段确认。
+也可查 `GET /api/status` (需鉴权) 的 `execution` 字段确认。
 
 ## 配置步骤
 
@@ -26,7 +26,10 @@ docker compose up -d shuffle shuffle-db shuffle-redis
 
 ### 2. 导入 Workflow 模板
 
-本目录提供 8 个动作的 Workflow 骨架 (`*.json`)。在 Shuffle UI:
+本目录目前提供 **4 个**动作的 Workflow 骨架 (`isolate_host` / `block_ip` /
+`kill_process` / `notify`)。其余动作 (block_domain / quarantine_file /
+freeze_account / create_ticket) 的骨架待补,配置了 workflow_id 之前这些动作
+一律走 MockExecutor (启动时会有显式警告,不会静默假装执行)。在 Shuffle UI:
 
 1. Workflows → **Import** → 上传对应 JSON
 2. 编辑 Workflow,把占位 App 替换为你的真实执行器:

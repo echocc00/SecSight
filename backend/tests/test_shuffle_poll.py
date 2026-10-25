@@ -3,14 +3,17 @@
 真实 Shuffle execute 是异步: 返回 executing/queued 表示已触发仍在跑。
 测试核心保证: 时间线如实反映 executing→success/failed,而不是把"已触发"
 当"已成功"。
+
+P0 后: 业务端点需 JWT (auth_client);签署身份来自 JWT / IM 回调 (conftest.sign_approval)。
 """
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.conftest import approve_action_with_all_roles
 from app.execution.shuffle import ShuffleExecutor
 
 
@@ -23,32 +26,6 @@ def _shuffle_response(status: str) -> MagicMock:
     http.__aenter__ = AsyncMock(return_value=http)
     http.__aexit__ = AsyncMock(return_value=False)
     return http
-
-
-async def _executor_with_status(*statuses: str) -> ShuffleExecutor:
-    """模拟 Shuffle get_execution_status 逐个返回状态"""
-    calls = 0
-
-    async def _get(url, **kwargs):
-        nonlocal calls
-        idx = min(calls, len(statuses) - 1)
-        calls += 1
-        return _status_resp(statuses[idx])
-
-    http = MagicMock()
-    http.get = _get
-    http.__aenter__ = AsyncMock(return_value=http)
-    http.__aexit__ = AsyncMock(return_value=False)
-    with patch("httpx.AsyncClient", return_value=http):
-        executor = ShuffleExecutor(base_url="http://shuffle:3001", api_key="k", workflow_map={})
-        executor.get_execution_status = None  # 直接用 client mock 走 poll_to_terminal 内部
-        # poll_to_terminal 内部调用 self.get_execution_status,手动替换
-        executor.get_execution_status = AsyncMock(side_effect=[_s(s) for s in statuses])
-    return executor
-
-
-def _s(status: str) -> dict:
-    return {"status": status, "execution_id": "exec-1"}
 
 
 @pytest.mark.asyncio
@@ -102,11 +79,10 @@ class TestPollToTerminal:
 
 class TestExecuteNodeShuffle:
     @pytest.mark.asyncio
-    async def test_executing_not_marked_success(self, client, monkeypatch):
+    async def test_executing_not_marked_success(self, auth_client, monkeypatch):
         """异步 Shuffle 触发后 step 应标 executing,不是成功"""
         from app.agents import nodes
         from app.execution import mock as exec_mock
-        from app.models.schemas import Action, ActionType, AutonomyLevel
 
         class _AsyncShuffle(exec_mock.ActionExecutor):
             async def execute(self, action, case_id=None):
@@ -126,24 +102,22 @@ class TestExecuteNodeShuffle:
         monkeypatch.setattr(exec_mock, "get_executor", lambda: _AsyncShuffle())
         monkeypatch.setattr(nodes, "_poll_shuffle_to_terminal", _noop)
 
-        resp = await client.post(
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "sh-exec", "src_ip": "45.33.32.156"},
         )
         case_id = resp.json()["data"]["case_id"]
-        pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
+        pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         for item in pending:
-            for role in item["required_roles"]:
-                await client.post(
-                    f"/api/approvals/{case_id}/actions/{item['action_id']}/approve",
-                    json={"approver_role": role, "approver_user": f"{role}-u", "decision": "approved"},
-                )
+            await approve_action_with_all_roles(
+                auth_client, case_id, item["action_id"], item["required_roles"]
+            )
 
         from app.agents.nodes import execute_node
 
         await execute_node({"case_id": case_id})
 
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
         executed = [
             s
             for s in case["execution_log"]
@@ -156,7 +130,7 @@ class TestExecuteNodeShuffle:
         ]
 
     @pytest.mark.asyncio
-    async def test_terminal_triggered_marked_success(self, client, monkeypatch):
+    async def test_terminal_triggered_marked_success(self, auth_client, monkeypatch):
         """Shuffle 返回 status=success (同步判断终态) → 直接 success"""
         from app.execution import mock as exec_mock
 
@@ -179,21 +153,19 @@ class TestExecuteNodeShuffle:
 
         monkeypatch.setattr(nodes, "_poll_shuffle_to_terminal", _noop)
 
-        resp = await client.post(
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "sh-done", "src_ip": "45.33.32.156"},
         )
         case_id = resp.json()["data"]["case_id"]
-        pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
+        pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         for item in pending:
-            for role in item["required_roles"]:
-                await client.post(
-                    f"/api/approvals/{case_id}/actions/{item['action_id']}/approve",
-                    json={"approver_role": role, "approver_user": f"{role}-u", "decision": "approved"},
-                )
+            await approve_action_with_all_roles(
+                auth_client, case_id, item["action_id"], item["required_roles"]
+            )
 
         await execute_node({"case_id": case_id})
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
         shuffle_steps = [
             s for s in case["execution_log"] if (s.get("result") or {}).get("executor") == "shuffle"
         ]
@@ -202,9 +174,9 @@ class TestExecuteNodeShuffle:
 
 class TestUpdateExecutionStatus:
     @pytest.mark.asyncio
-    async def test_writes_terminal_status_back(self, client):
+    async def test_writes_terminal_status_back(self, auth_client):
         """后台轮询终态回写: 原 executing step 更新为 success + 保留执行信息"""
-        resp = await client.post(
+        resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "sh-repo", "src_ip": "45.33.32.156"},
         )
@@ -212,7 +184,7 @@ class TestUpdateExecutionStatus:
 
         from app.db.database import async_session
         from app.db.repositories import CaseRepository
-        from app.models.schemas import Action, ExecutionStep
+        from app.models.schemas import ExecutionStep
 
         # 构造一条"已触发,Shuffle 执行中"的 step,模拟异步执行完成后回写
         async with async_session() as session:

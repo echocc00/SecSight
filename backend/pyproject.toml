@@ -101,6 +101,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["app"]
+branch = true  # 分支覆盖: 只测 if 真分支的"覆盖 100%"是假覆盖
 omit = [
     "app/main.py",        # ASGI 入口
     "app/db/database.py", # engine 初始化
@@ -111,3 +112,15 @@ omit = [
 precision = 1
 show_missing = true
 skip_covered = false
+# 覆盖率门槛双保险: CI 里也有 --cov-fail-under=80,本地裸跑同样生效
+fail_under = 80
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# 起步规则集: 错误级 (E9/F 系全部) + 未使用导入/变量 + 歧义判定。
+# 完整 lint 清理是独立技术债,不阻塞 CI (P2)。
+select = ["E9", "F"]
+ignore = []

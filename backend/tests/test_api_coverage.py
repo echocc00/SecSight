@@ -1,11 +1,14 @@
-"""API 路由覆盖率补充: alerts search/poll/devices + approvals records + workflow resume"""
+"""API 路由覆盖率补充: alerts search/poll/devices + approvals records + workflow resume
+
+P0 鉴权修复后: 业务端点需 JWT (auth_client),webhook 端点走共享密钥头。
+"""
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
 
 import pytest
+
+from tests.conftest import WEBHOOK_TOKEN, approve_action_with_all_roles
 
 
 async def _inject(client, alert_type: str = "xmrig_process") -> dict:
@@ -16,10 +19,10 @@ async def _inject(client, alert_type: str = "xmrig_process") -> dict:
 
 class TestAlertSearch:
     @pytest.mark.asyncio
-    async def test_search_pg_fallback_finds_injected_alert(self, client):
+    async def test_search_pg_fallback_finds_injected_alert(self, auth_client):
         """PG fallback 搜索: OpenSearch 未启用时扫描 Case.alerts"""
-        await _inject(client, "xmrig_process")
-        r = await client.get("/api/alerts/search", params={"q": "xmrig", "size": 10})
+        await _inject(auth_client, "xmrig_process")
+        r = await auth_client.get("/api/alerts/search", params={"q": "xmrig", "size": 10})
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["source"] == "postgres_fallback"
@@ -29,29 +32,29 @@ class TestAlertSearch:
         assert "alert" in hit
 
     @pytest.mark.asyncio
-    async def test_search_pg_fallback_by_ip(self, client):
-        await _inject(client, "xmrig_process")
-        r = await client.get("/api/alerts/search", params={"q": "192.168"})
+    async def test_search_pg_fallback_by_ip(self, auth_client):
+        await _inject(auth_client, "xmrig_process")
+        r = await auth_client.get("/api/alerts/search", params={"q": "192.168"})
         data = r.json()["data"]
         assert data["source"] == "postgres_fallback"
 
     @pytest.mark.asyncio
-    async def test_search_pg_fallback_no_match(self, client):
-        await _inject(client, "xmrig_process")
-        r = await client.get("/api/alerts/search", params={"q": "nonexistent_term_xyz"})
+    async def test_search_pg_fallback_no_match(self, auth_client):
+        await _inject(auth_client, "xmrig_process")
+        r = await auth_client.get("/api/alerts/search", params={"q": "nonexistent_term_xyz"})
         data = r.json()["data"]
         assert data["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_search_pg_fallback_respects_size(self, client):
+    async def test_search_pg_fallback_respects_size(self, auth_client):
         for _ in range(3):
-            await _inject(client, "xmrig_process")
-        r = await client.get("/api/alerts/search", params={"q": "xmrig", "size": 2})
+            await _inject(auth_client, "xmrig_process")
+        r = await auth_client.get("/api/alerts/search", params={"q": "xmrig", "size": 2})
         data = r.json()["data"]
         assert data["count"] <= 2
 
     @pytest.mark.asyncio
-    async def test_search_opensearch_path_when_enabled(self, client, monkeypatch):
+    async def test_search_opensearch_path_when_enabled(self, auth_client, monkeypatch):
         """OpenSearch 启用时走 opensearch 路径 (mock client)"""
         from app.core.config import settings
         from unittest.mock import AsyncMock, MagicMock
@@ -64,13 +67,13 @@ class TestAlertSearch:
         import app.integrations.opensearch as os_mod
 
         monkeypatch.setattr(os_mod, "get_opensearch", lambda: mock_client)
-        r = await client.get("/api/alerts/search", params={"q": "xmrig"})
+        r = await auth_client.get("/api/alerts/search", params={"q": "xmrig"})
         data = r.json()["data"]
         assert data["source"] == "opensearch"
         assert data["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_search_opensearch_failure_falls_back_to_pg(self, client, monkeypatch):
+    async def test_search_opensearch_failure_falls_back_to_pg(self, auth_client, monkeypatch):
         """OpenSearch 启用但调用失败 → 降级 PG"""
         from app.core.config import settings
         from unittest.mock import AsyncMock, MagicMock
@@ -81,8 +84,8 @@ class TestAlertSearch:
         import app.integrations.opensearch as os_mod
 
         monkeypatch.setattr(os_mod, "get_opensearch", lambda: mock_client)
-        await _inject(client, "xmrig_process")
-        r = await client.get("/api/alerts/search", params={"q": "xmrig"})
+        await _inject(auth_client, "xmrig_process")
+        r = await auth_client.get("/api/alerts/search", params={"q": "xmrig"})
         data = r.json()["data"]
         assert data["source"] == "postgres_fallback"
 
@@ -90,17 +93,18 @@ class TestAlertSearch:
 class TestWazuhPoll:
     @pytest.mark.asyncio
     async def test_wazuh_webhook_invalid_payload_returns_error(self, client):
-        """webhook 收到无法解析的 payload → 返回 error"""
+        """webhook 收到无法解析的 payload → 返回 error (webhook 走共享密钥,不走 JWT)"""
         r = await client.post(
             "/api/alerts/wazuh-webhook",
             json={"rule": {"level": "not-a-number"}},
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
         )
         data = r.json()
         assert data["success"] is False
         assert "解析失败" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_poll_file_mode_reads_alerts_json(self, client, tmp_path, monkeypatch):
+    async def test_poll_file_mode_reads_alerts_json(self, auth_client, tmp_path, monkeypatch):
         """文件模式: WAZUH_ALERTS_JSON 指向测试 JSON"""
         alerts_file = tmp_path / "alerts.json"
         sample = {
@@ -114,7 +118,7 @@ class TestWazuhPoll:
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "wazuh_alerts_json", str(alerts_file))
-        r = await client.post("/api/alerts/wazuh/poll", params={"limit": 5})
+        r = await auth_client.post("/api/alerts/wazuh/poll", params={"limit": 5})
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["polled"] == 1
@@ -122,13 +126,13 @@ class TestWazuhPoll:
         assert data["cases"][0]["severity"] == "critical"
 
     @pytest.mark.asyncio
-    async def test_poll_api_mode_failure_returns_error(self, client, monkeypatch):
+    async def test_poll_api_mode_failure_returns_error(self, auth_client, monkeypatch):
         """API 模式: 无 WAZUH_ALERTS_JSON,连接失败返回 error"""
         from app.core.config import settings
 
         monkeypatch.setattr(settings, "wazuh_alerts_json", None)
         monkeypatch.setattr(settings, "wazuh_api_url", "http://nonexistent-wazuh:55000")
-        r = await client.post("/api/alerts/wazuh/poll")
+        r = await auth_client.post("/api/alerts/wazuh/poll")
         data = r.json()
         assert data["success"] is False
         assert "Wazuh" in data["error"]
@@ -136,8 +140,8 @@ class TestWazuhPoll:
 
 class TestDevicesWebhook:
     @pytest.mark.asyncio
-    async def test_list_supported_devices(self, client):
-        r = await client.get("/api/alerts/devices/supported")
+    async def test_list_supported_devices(self, auth_client):
+        r = await auth_client.get("/api/alerts/devices/supported")
         assert r.status_code == 200
         devices = r.json()["data"]["devices"]
         assert len(devices) > 0
@@ -146,7 +150,7 @@ class TestDevicesWebhook:
 
     @pytest.mark.asyncio
     async def test_device_webhook_qianxin_creates_case(self, client):
-        """奇安信设备告警 webhook → Case 建立"""
+        """奇安信设备告警 webhook → Case 建立 (webhook 走共享密钥,不走 JWT)"""
         payload = {
             "device_type": "qianxin",
             "alert": {
@@ -157,7 +161,11 @@ class TestDevicesWebhook:
                 "raw": {"process": "xmrig"},
             },
         }
-        r = await client.post("/api/alerts/devices/qianxin/webhook", json=payload)
+        r = await client.post(
+            "/api/alerts/devices/qianxin/webhook",
+            json=payload,
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+        )
         assert r.status_code == 200
         data = r.json()["data"]
         assert data["source"] == "qianxin"
@@ -165,42 +173,47 @@ class TestDevicesWebhook:
 
     @pytest.mark.asyncio
     async def test_device_webhook_unsupported_type_returns_error(self, client):
-        r = await client.post("/api/alerts/devices/unknown_vendor/webhook", json={})
+        r = await client.post(
+            "/api/alerts/devices/unknown_vendor/webhook",
+            json={},
+            headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
+        )
         data = r.json()
         assert data["success"] is False
 
 
 class TestApprovalRecords:
     @pytest.mark.asyncio
-    async def test_list_approval_records_empty(self, client):
-        data = await _inject(client, "xmrig_process")
+    async def test_list_approval_records_empty(self, auth_client):
+        data = await _inject(auth_client, "xmrig_process")
         case_id = data["case_id"]
-        r = await client.get(f"/api/approvals/{case_id}/records")
+        r = await auth_client.get(f"/api/approvals/{case_id}/records")
         assert r.status_code == 200
         assert r.json()["data"] == []
 
     @pytest.mark.asyncio
-    async def test_list_approval_records_after_approval(self, client):
-        data = await _inject(client, "xmrig_process")
+    async def test_list_approval_records_after_approval(self, auth_client):
+        data = await _inject(auth_client, "xmrig_process")
         case_id = data["case_id"]
-        pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
+        pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         aid = pending[0]["action_id"]
-        await client.post(
+        # admin 登录签出 ciso_or_delegate (身份来自 JWT)
+        r = await auth_client.post(
             f"/api/approvals/{case_id}/actions/{aid}/approve",
-            json={"approver_role": "incident_commander", "approver_user": "u",
-                  "decision": "approved", "comment": "ok"},
+            json={"decision": "approved", "comment": "ok"},
         )
-        r = await client.get(f"/api/approvals/{case_id}/records")
+        assert r.status_code == 200, r.text
+        r = await auth_client.get(f"/api/approvals/{case_id}/records")
         records = r.json()["data"]
         assert len(records) >= 1
         assert records[0]["decision"] == "approved"
 
     @pytest.mark.asyncio
-    async def test_pending_shows_missing_roles(self, client):
+    async def test_pending_shows_missing_roles(self, auth_client):
         """pending 端点返回 required/approved/missing roles"""
-        data = await _inject(client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process")
         case_id = data["case_id"]
-        pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
+        pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         assert len(pending) > 0
         item = pending[0]
         assert "required_roles" in item
@@ -209,30 +222,25 @@ class TestApprovalRecords:
         assert len(item["missing_roles"]) > 0  # 未审批时应有缺失
 
     @pytest.mark.asyncio
-    async def test_pending_nonexistent_case_404(self, client):
-        r = await client.get("/api/approvals/no-such-case/pending")
+    async def test_pending_nonexistent_case_404(self, auth_client):
+        r = await auth_client.get("/api/approvals/no-such-case/pending")
         assert r.status_code == 404
 
 
 class TestWorkflowResume:
     @pytest.mark.asyncio
-    async def test_resume_workflow_advances_to_resolved(self, client):
-        """resume_workflow: 审批后恢复 → resolved"""
+    async def test_resume_workflow_advances_to_resolved(self, auth_client):
+        """resume_workflow: 全部审批角色签批后恢复 → resolved (身份来自 JWT/IM 回调)"""
         from app.agents.workflow import resume_workflow
 
-        data = await _inject(client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process")
         case_id = data["case_id"]
-        pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
+        pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         for action in pending:
             roles = action.get("required_roles", ["incident_commander", "approver"])
-            for role in roles:
-                await client.post(
-                    f"/api/approvals/{case_id}/actions/{action['action_id']}/approve",
-                    json={"approver_role": role, "approver_user": f"u-{role}",
-                          "decision": "approved"},
-                )
+            await approve_action_with_all_roles(auth_client, case_id, action["action_id"], roles)
         await resume_workflow(case_id)
-        case = (await client.get(f"/api/cases/{case_id}")).json()["data"]
+        case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
         assert case["status"] == "resolved"
 
     @pytest.mark.asyncio
