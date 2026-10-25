@@ -181,6 +181,10 @@ def validate_secrets() -> list[str]:
         if not settings.abuseipdb_api_key and not settings.otx_api_key:
             warnings.append("⚠️ ENABLE_THREAT_INTEL=true 但未配置任何情报 API key")
 
+    if not settings.tls_verify:
+        msg = "TLS_VERIFY=false — Wazuh/OpenSearch 连接不校验证书 (凭据可被中间人截获)"
+        warnings.append(f"🚨 {msg}" if settings.env == "production" else f"⚠️ {msg}")
+
     return warnings
 
 

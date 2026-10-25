@@ -10,9 +10,14 @@ description: |
   服务器被上传/植入 Webshell,攻击者可能已具备执行能力。
 triggers:
   sigma_rules: [webshell_upload, webshell_access]
-  wazuh_rules: ["9222"]
+  wazuh_rules:
+    - "554"    # FIM: File added to the system — web 目录新增文件 (webshell 落地, Wazuh ruleset 0015-ossec_rules.xml)
+  # Web 服务运行账户/子进程异常 (webshell 执行上下文);原 [webshell] 为占位词已删除
   process_patterns:
-    names: [webshell]
+    names: [www-data, php-fpm, php-cgi, tomcat]
+  # Webshell 落地后的典型执行痕迹 (post-exploit 命令)
+  indicators:
+    commands: ["whoami", "eval(", "base64_decode", "cmd="]
 mitre_mapping:
   tactics: [TA0003 Persistence]
   techniques: [T1505.003 Web Shell]

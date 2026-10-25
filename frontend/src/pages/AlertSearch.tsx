@@ -94,7 +94,7 @@ export default function AlertSearch() {
 
       {hits.length > 0 && (
         <Table
-          rowKey={(r) => r.case_id + r.alert.alert_id}
+          rowKey={(r, i) => `${r.case_id}:${r.alert?.alert_id ?? i}`}
           dataSource={hits}
           pagination={{ pageSize: 20 }}
           expandable={{

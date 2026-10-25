@@ -48,7 +48,11 @@ class TestReportGeneration:
 
     @pytest.mark.asyncio
     async def test_report_contains_judgment_and_actions(self, auth_client):
-        r = await auth_client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        r = await auth_client.post(
+            "/api/alerts/inject",
+            json={"alert_type": "xmrig_process"},
+            params={"wait": "true"},  # 报告须含研判/处置动作 (编排产物)
+        )
         case_id = r.json()["data"]["case_id"]
 
         r = await auth_client.post(f"/api/compliance/{case_id}/report?format=markdown")

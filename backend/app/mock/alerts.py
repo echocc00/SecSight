@@ -179,7 +179,7 @@ def log_collection_stopped_alert(
         alert_id=str(uuid4()),
         ts=datetime.utcnow(),
         source="wazuh",
-        rule_id="502",
+        rule_id="504",  # 官方 ruleset: "Wazuh agent disconnected" (502 是 server started,曾错用)
         rule_level=7,
         severity=Severity.medium,
         src_ip=src_ip,
@@ -193,7 +193,7 @@ def log_collection_stopped_alert(
             "collector": "filebeat",
         },
         mitre_tactics=["TA0005 Defense Evasion"],
-        mitre_techniques=["T1562 Impair Defenses", "T1562.008 Disable Cloud Logs"],
+        mitre_techniques=["T1562 Impair Defenses", "T1070.002 Clear Linux or Mac System Logs"],
         message="Log collection stopped: agent 003 disconnected for 18 minutes",
     )
 
@@ -209,7 +209,7 @@ def critical_service_crash_alert(
         alert_id=str(uuid4()),
         ts=datetime.utcnow(),
         source="wazuh",
-        rule_id="591",
+        rule_id="service_stop",  # 内部合成 ID: 服务停止无通用 Wazuh 数字规则 (591 实为 log rotated)
         rule_level=8,
         severity=Severity.high,
         src_ip=src_ip,
@@ -307,7 +307,7 @@ def phishing_email_alert(
     hostname: str = "web-prod-01", src_ip: str = "10.0.1.15", dst_ip: str | None = None, pid: int = 28371,
 ) -> Alert:
     return Alert(
-        alert_id=str(uuid4()), ts=datetime.utcnow(), source="wazuh", rule_id="0320",
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="wazuh", rule_id="phishing_email",  # 内部合成 ID: 邮件网关类告警不经 Wazuh 数字规则
         rule_level=8, severity=Severity.medium, src_ip="45.10.0.1",
         asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
         raw={"sigma_id": "phishing_email_detected", "sender": "hr@company-secure.com", "attachment": "invoice.xlsm", "recipients": 42},
@@ -349,7 +349,7 @@ def waf_trigger_alert(
     hostname: str = "web-prod-01", src_ip: str = "45.10.0.77", dst_ip: str | None = None, pid: int = 28371,
 ) -> Alert:
     return Alert(
-        alert_id=str(uuid4()), ts=datetime.utcnow(), source="wazuh", rule_id="933100",
+        alert_id=str(uuid4()), ts=datetime.utcnow(), source="wazuh", rule_id="30118",  # 官方 ruleset 0250-apache_rules.xml: "ModSecurity: Access attempt blocked"
         rule_level=7, severity=Severity.high, src_ip=src_ip,
         asset=AssetRef(host_id=hostname, hostname=hostname, ips=[src_ip]),
         raw={"sigma_id": "waf_trigger", "waf_category": "sqli", "uri": "/login?user=1%27", "payload": "1 OR 1=1"},

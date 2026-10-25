@@ -19,7 +19,7 @@ _NEW_MATCHES = {
     "dns_tunneling": "pb_dns_tunneling_v1",
     "database_anomaly": "pb_database_anomaly_v1",
     "api_abuse": "pb_api_abuse_v1",
-    "unauthorized_data_access": "pb_unauthorized_access_v1",
+    "unauthorized_data_access": "pb_unauthorized_data_access_v1",
     "backup_failure": "pb_backup_failure_v1",
     "compliance_baseline": "pb_compliance_baseline_v1",
 }
@@ -67,6 +67,7 @@ class TestInjectNewPlaybooks:
         resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "webshell_upload", "hostname": "inj-webshell"},
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
         case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
@@ -87,6 +88,7 @@ class TestInjectNewPlaybooks:
         resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "backup_failure", "hostname": "inj-backup"},
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
         case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
@@ -106,6 +108,7 @@ class TestEndToEndOneNewScenario:
         resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "dns_tunneling", "hostname": "inj-dns"},
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]

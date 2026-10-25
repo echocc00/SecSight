@@ -1,5 +1,5 @@
 # Web 攻击应急响应 (Phase2 P1)
-# MITRE: TA0011 Initial Access + T1190 Exploit Public-Facing Application
+# MITRE: TA0001 Initial Access + T1190 Exploit Public-Facing Application
 
 id: pb_web_attack_v1
 name: Web 攻击应急响应
@@ -20,7 +20,7 @@ triggers:
     commands: ["union select", "or 1=1", "<script", "../etc/passwd"]
 
 mitre_mapping:
-  tactics: [TA0011 Initial Access]
+  tactics: [TA0001 Initial Access]
   techniques: [T1190 Exploit Public-Facing Application]
 
 investigation_steps:

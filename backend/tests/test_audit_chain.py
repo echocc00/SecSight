@@ -188,6 +188,7 @@ class TestComplianceReportChain:
         inject = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "audit-h1"},
+            params={"wait": "true"},  # 审计记录由编排写入
         )
         case_id = inject.json()["data"]["case_id"]
 
@@ -200,6 +201,7 @@ class TestComplianceReportChain:
         inject = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "audit-h2"},
+            params={"wait": "true"},  # 审计记录由编排写入
         )
         case_id = inject.json()["data"]["case_id"]
 
@@ -213,6 +215,7 @@ class TestComplianceReportChain:
         inject = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "audit-h3"},
+            params={"wait": "true"},  # 需编排已写入审计记录 (seq=1) 才可篡改验证
         )
         case_id = inject.json()["data"]["case_id"]
 

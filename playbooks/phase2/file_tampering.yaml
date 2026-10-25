@@ -10,12 +10,15 @@ description: |
   关键配置文件/二进制被篡改 (FIM 命中),可能为持久化或破坏。
 triggers:
   sigma_rules: [file_tampering]
-  wazuh_rules: ["550"]
+  wazuh_rules:
+    - "550"    # FIM: Integrity checksum changed (Wazuh ruleset 0015-ossec_rules.xml)
+  # 真实篡改源进程: 交互 shell / 脚本解释器 / cron与systemd 守护进程对关键文件的改动
   process_patterns:
-    names: [tamper]
+    names: [bash, python, perl, crond, systemd]
 mitre_mapping:
-  tactics: [TA0005 Defense Evasion]
+  tactics: [TA0003 Persistence, TA0040 Impact]
   techniques: [T1561 Disk Wipe, T1547 Boot or Logon Autostart]
+  # T1561 属 TA0040 Impact; T1547 属 TA0003 Persistence (原误挂 TA0005)
 investigation_steps:
   - id: I1
     name: 篡改范围确定

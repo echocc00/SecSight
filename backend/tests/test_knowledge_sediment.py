@@ -259,8 +259,10 @@ class TestWriteL1Yaml:
 class TestSedimentAPI:
     @pytest.mark.asyncio
     async def test_sediment_endpoint(self, auth_client):
-        # 先注入告警建 Case
-        r = await auth_client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        # 先注入告警建 Case (sediment 依赖编排产出的 judgment/ttps,须同步等编排)
+        r = await auth_client.post(
+            "/api/alerts/inject", json={"alert_type": "xmrig_process"}, params={"wait": "true"}
+        )
         case_id = r.json()["data"]["case_id"]
 
         r = await auth_client.post(f"/api/knowledge/{case_id}/sediment")
@@ -281,7 +283,9 @@ class TestSedimentAutoTriggerInWorkflow:
 
     async def _resolve_case(self, client) -> str:
         """注入并把所有 L2 动作按角色签批 (身份来自 JWT / IM 回调) → resolved"""
-        r = await client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        r = await client.post(
+            "/api/alerts/inject", json={"alert_type": "xmrig_process"}, params={"wait": "true"}
+        )
         case_id = r.json()["data"]["case_id"]
         pending = (await client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         for action in pending:

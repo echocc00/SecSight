@@ -92,13 +92,21 @@ jobs:
             backend/python-licenses.csv
             frontend-licenses.csv
 
-      - name: 检查 AGPL 组件在隔离网络
+      - name: 检查 AGPL 组件端口与网络隔离 (fail-closed)
         run: |
-          # docker-compose 中 Shuffle/OpenCTI/IRIS 必须在 isolation-net
-          if ! grep -A2 "shuffle:" deploy/docker-compose.yml | grep -q "isolation-net"; then
-            echo "⚠️ Shuffle 不在 isolation-net"
+          # 1. Shuffle/OpenCTI/IRIS 必须在 isolation-net
+          for svc in shuffle opencti dfir-iris; do
+            block=$(awk "/^  ${svc}:/,/^  [a-z]/" deploy/docker-compose.yml)
+            if ! echo "$block" | grep -q "isolation-net"; then
+              echo "❌ ${svc} 不在 isolation-net"; exit 1
+            fi
+          done
+          # 2. 端口发布必须绑 127.0.0.1 (同宿主裸暴露 = 隔离名不副实)
+          unbound=$(grep -E '^\s*-\s*"?[0-9]+:[0-9]+' deploy/docker-compose.yml || true)
+          if [ -n "$unbound" ]; then
+            echo "❌ 以下端口未绑定 127.0.0.1,会向 LAN 暴露:"; echo "$unbound"; exit 1
           fi
-          echo "✅ 网络隔离检查完成"
+          echo "✅ 网络与端口隔离检查通过"
 
   lint:
     name: Lint (ruff)
@@ -206,6 +214,8 @@ jobs:
         working-directory: frontend
         run: |
           npm ci --legacy-peer-deps
+          # 前端单测 (此前零测试;vitest 只跑纯逻辑: datetime 时区坑/ws 事件总线)
+          npm test
           npx @cyclonedx/cyclonedx-npm --output-file ../sbom-frontend.json
       - name: 构建 backend 镜像并 Trivy 扫描
         run: |

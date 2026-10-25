@@ -10,8 +10,12 @@ description: |
   大规模流量攻击 (SYN Flood/UDP Flood/CC),影响业务可用性。
 triggers:
   sigma_rules: [ddos_attack]
-  process_patterns:
-    names: [synflood]
+  wazuh_rules:
+    - "44422"   # FortiDDoS: Effective rate limit for the syn threshold has been reached
+    - "44440"   # FortiDDoS: syn-per-src threshold reached (Wazuh ruleset 0390-fortiddos_rules.xml)
+  # 流量型攻击无进程可匹配;用受攻击目标端口补充匹配 (engine 按 raw.dst_port 匹配)
+  network:
+    pool_ports: [80, 443, 53]
 mitre_mapping:
   tactics: [TA0040 Impact]
   techniques: [T1498 Network Denial of Service]
@@ -41,7 +45,7 @@ containment_actions:
   - id: A3_service_restart
     name: 重启受影响服务
     action_type: service_restart
-    autonomy: L4
+    autonomy: L2
     approval: single
     tools: [orchestrator]
 knowledge_assets:

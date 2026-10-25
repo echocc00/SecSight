@@ -14,7 +14,7 @@ triggers:
   indicators:
     commands: ["dnscat", "iodine"]
 mitre_mapping:
-  tactics: [TA0011 Command and Control]
+  tactics: [TA0011 Command and Control, TA0010 Exfiltration]
   techniques: [T1071.004 DNS, T1048 Exfiltration Over Alternative Protocol]
 investigation_steps:
   - id: I1

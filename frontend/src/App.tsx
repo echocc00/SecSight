@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Link, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from "react-router-dom";
 import { Layout, Menu, theme, Dropdown, Space, Tag, Spin, Badge } from "antd";
 import {
   DashboardOutlined,
@@ -11,7 +11,7 @@ import {
   SafetyCertificateOutlined,
   AuditOutlined,
 } from "@ant-design/icons";
-import { useState, useEffect, Suspense, lazy, useCallback } from "react";
+import { useState, useEffect, useMemo, Suspense, lazy, useCallback } from "react";
 import { auth, api } from "./api/client";
 import { connect as connectWS, disconnect as disconnectWS, onEvent } from "./lib/ws";
 
@@ -35,8 +35,18 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   const { token } = theme.useToken();
+  const location = useLocation();
   const [role, setRole] = useState<string | null>(auth.getRole());
   const [pendingCount, setPendingCount] = useState(0);
+
+  // 菜单高亮随路由: defaultSelectedKeys 只在挂载时生效,客户端路由后不更新
+  const selectedKey = useMemo(() => {
+    if (location.pathname.startsWith("/cases")) return "cases";
+    if (location.pathname.startsWith("/approvals")) return "approvals";
+    if (location.pathname.startsWith("/playbooks")) return "playbooks";
+    if (location.pathname.startsWith("/compliance")) return "compliance";
+    return "dashboard";
+  }, [location.pathname]);
 
   useEffect(() => {
     setRole(auth.getRole());
@@ -109,7 +119,7 @@ export default function App() {
                   </div>
                   <Menu
                     mode="inline"
-                    defaultSelectedKeys={["dashboard"]}
+                    selectedKeys={[selectedKey]}
                     items={[
                       {
                         key: "dashboard",

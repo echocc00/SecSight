@@ -16,7 +16,10 @@ from app.db.repositories import AuditLogRepository
 
 
 async def _inject(client, alert_type: str = "xmrig_process") -> str:
-    r = await client.post("/api/alerts/inject", json={"alert_type": alert_type})
+    # 本文件所有用例断言 enriched_context/审计/证据包 (编排产物),须同步等编排完成
+    r = await client.post(
+        "/api/alerts/inject", json={"alert_type": alert_type}, params={"wait": "true"}
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]["case_id"]
 

@@ -105,6 +105,7 @@ class TestExecuteNodeShuffle:
         resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "sh-exec", "src_ip": "45.33.32.156"},
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
@@ -156,6 +157,7 @@ class TestExecuteNodeShuffle:
         resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "sh-done", "src_ip": "45.33.32.156"},
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
@@ -179,6 +181,7 @@ class TestUpdateExecutionStatus:
         resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "sh-repo", "src_ip": "45.33.32.156"},
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
 

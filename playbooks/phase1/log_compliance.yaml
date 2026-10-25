@@ -18,8 +18,9 @@ triggers:
     - log_collection_stopped
     - agent_disconnected
   wazuh_rules:
-    - "agent_disconnected"
-    - "502"      # agent connection lost
+    - "504"      # Wazuh agent disconnected (Wazuh ruleset 0015-ossec_rules.xml;
+                 # 原 "agent_disconnected" 非数字死条目已删除;
+                 # 原 "502" 实为 "Wazuh server started",与断连语义不符,一并删除)
   process_patterns:
     names: []
     cmdline_contains: []
@@ -33,8 +34,9 @@ mitre_mapping:
   tactics: [TA0005 Defense Evasion]
   techniques:
     - T1562 Impair Defenses
-    - T1562.008 Disable Cloud Logs
-    - T1070.001 Clear Windows Event Logs
+    - T1070.002 Clear Linux or Mac System Logs
+  # Linux rsyslog/filebeat 场景: 原 T1562.008 (Cloud Logs)/T1070.001 (Clear Windows
+  # Event Logs) 平台不符,已替换为 T1070.002
 
 investigation_steps:
   - id: I1

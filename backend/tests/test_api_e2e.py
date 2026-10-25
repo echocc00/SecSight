@@ -10,8 +10,10 @@ import pytest
 from tests.conftest import approve_action_with_all_roles
 
 
-async def _inject(client, alert_type: str) -> dict:
-    r = await client.post("/api/alerts/inject", json={"alert_type": alert_type})
+async def _inject(client, alert_type: str, wait: bool = False) -> dict:
+    """wait=True: 同步等编排完成 (断言 judgment/actions/execution_log 等编排产物时必须)"""
+    params = {"wait": "true"} if wait else None
+    r = await client.post("/api/alerts/inject", json={"alert_type": alert_type}, params=params)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["success"] is True
@@ -66,7 +68,7 @@ class TestCryptominerApprovalFlow:
 
     @pytest.mark.asyncio
     async def test_case_reaches_pending_approval_with_judgment(self, auth_client):
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         r = await auth_client.get(f"/api/cases/{data['case_id']}")
         case = r.json()["data"]
         assert case["status"] == "pending_approval"
@@ -76,7 +78,7 @@ class TestCryptominerApprovalFlow:
 
     @pytest.mark.asyncio
     async def test_full_approval_flow_resolves_case(self, auth_client):
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         case_id = data["case_id"]
         await _approve_all(auth_client, case_id)
 
@@ -89,7 +91,7 @@ class TestCryptominerApprovalFlow:
 
     @pytest.mark.asyncio
     async def test_evidence_pack_has_timeline_and_mitre(self, auth_client):
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         case_id = data["case_id"]
         await _approve_all(auth_client, case_id)
 
@@ -105,7 +107,7 @@ class TestAutoExecuteFlow:
 
     @pytest.mark.asyncio
     async def test_log_compliance_auto_resolves_without_approval(self, auth_client):
-        data = await _inject(auth_client, "log_collection_stopped")
+        data = await _inject(auth_client, "log_collection_stopped", wait=True)
         assert data["playbook_id"] == "pb_log_compliance_v1"
 
         r = await auth_client.get(f"/api/cases/{data['case_id']}")
@@ -126,7 +128,7 @@ class TestApprovalValidation:
 
     @pytest.mark.asyncio
     async def test_pending_approvals_lists_only_l2(self, auth_client):
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         r = await auth_client.get(f"/api/approvals/{data['case_id']}/pending")
         pending = r.json()["data"]
         assert len(pending) > 0
@@ -149,7 +151,7 @@ class TestCaseListing:
 
     @pytest.mark.asyncio
     async def test_list_cases_filter_by_status(self, auth_client):
-        await _inject(auth_client, "xmrig_process")  # → pending_approval
+        await _inject(auth_client, "xmrig_process", wait=True)  # → pending_approval
         r = await auth_client.get("/api/cases", params={"status": "pending_approval"})
         cases = r.json()["data"]
         assert all(c["status"] == "pending_approval" for c in cases)

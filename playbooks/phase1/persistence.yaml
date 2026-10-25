@@ -39,8 +39,9 @@ mitre_mapping:
   tactics: [TA0003 Persistence]
   techniques:
     - T1053.003 Cron
-    - T1547.001 Registry Run Keys / Startup Folder
-    - T1098 Account Manipulation
+    - T1543.002 Systemd Service
+    - T1098.004 SSH Authorized Keys
+  # Linux 场景: 原 T1547.001 Registry Run Keys 为 Windows 技术,已替换
 
 investigation_steps:
   - id: I1

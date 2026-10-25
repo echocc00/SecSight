@@ -10,11 +10,12 @@ description: |
   数据库异常查询 (全表导出/拖库/慢查询风暴/未授权访问)。
 triggers:
   sigma_rules: [database_dump, database_anomaly]
-  wazuh_rules: ["84448"]
+  # 原 wazuh_rules ["84448"] 非真实 Wazuh 规则号 (ruleset 无此 ID),已删除;
+  # 拖库/全表导出无可靠 Wazuh 规则号,改用导出工具进程匹配
   process_patterns:
-    names: [mysqldump]
+    names: [mysqldump, pg_dump, expdp, mongoexport, sqlldr]
 mitre_mapping:
-  tactics: [TA0010 Exfiltration]
+  tactics: [TA0009 Collection, TA0010 Exfiltration]
   techniques: [T1020 Automated Exfiltration, T1213 Data from Information Repositories]
 investigation_steps:
   - id: I1

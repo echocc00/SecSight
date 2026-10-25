@@ -19,8 +19,10 @@ async def _seed_user(pg_session):
 
 
 async def _inject_and_pause(pg_client, alert_type: str = "xmrig_process") -> str:
-    """注入告警 → workflow 跑到 human_approve 中断,返回 case_id"""
-    r = await pg_client.post("/api/alerts/inject", json={"alert_type": alert_type})
+    """注入告警 → 同步等 workflow 跑到 human_approve 中断,返回 case_id"""
+    r = await pg_client.post(
+        "/api/alerts/inject", json={"alert_type": alert_type}, params={"wait": "true"}
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]["case_id"]
 

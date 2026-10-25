@@ -21,7 +21,8 @@ triggers:
 
 mitre_mapping:
   tactics: [TA0008 Lateral Movement]
-  techniques: [T1021 Remote Services, T1570 Lateral Tool Transfer, T1057 Process Discovery]
+  techniques: [T1021 Remote Services, T1570 Lateral Tool Transfer]
+  # 原 T1057 Process Discovery 属 TA0007 Discovery,与横向移动不符,已移除
 
 investigation_steps:
   - id: I1

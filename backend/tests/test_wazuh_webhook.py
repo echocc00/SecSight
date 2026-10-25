@@ -117,7 +117,8 @@ class TestWazuhWebhookEndpoint:
         r = await auth_client.post(
             "/api/alerts/wazuh-webhook",
             headers={"X-SecSight-Webhook-Token": WEBHOOK_TOKEN},
-            json=WAZUH_ALERT)
+            json=WAZUH_ALERT,
+            params={"wait": "true"})
         case_id = r.json()["data"]["case_id"]
 
         r = await auth_client.get(f"/api/cases/{case_id}")

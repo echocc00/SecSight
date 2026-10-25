@@ -16,6 +16,7 @@ from uuid import uuid4
 import httpx
 import structlog
 
+from app.core.config import settings
 from app.models.schemas import Alert, AssetRef, Severity
 
 log = structlog.get_logger()
@@ -103,7 +104,7 @@ class WazuhClient:
     async def _login(self) -> str:
         """获取 API token"""
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=settings.tls_verify) as client:
                 resp = await client.post(
                     f"{self.base_url}/security/user/authenticate",
                     auth=(self.username, self.password),
@@ -121,7 +122,7 @@ class WazuhClient:
         """查询最近告警 → Alert 列表"""
         token = self._token or await self._login()
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, verify=False) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, verify=settings.tls_verify) as client:
                 resp = await client.get(
                     f"{self.base_url}/security/events",
                     params={"limit": limit},

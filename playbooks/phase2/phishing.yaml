@@ -15,7 +15,8 @@ description: |
 
 triggers:
   sigma_rules: [phishing_email_detected, malicious_attachment, suspicious_url_in_email]
-  wazuh_rules: ["0320", "0321"]
+  # 原 wazuh_rules ["0320","0321"] 非真实 Wazuh 规则号,已删除;
+  # 邮件网关/DLP 源告警无可靠 Wazuh 数字规则号
   indicators:
     commands: []
 

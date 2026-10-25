@@ -182,6 +182,11 @@ class Settings(BaseSettings):
     feishu_app_secret: str = Field(default="", alias="FEISHU_APP_SECRET")
     dingtalk_app_secret: str = Field(default="", alias="DINGTALK_APP_SECRET")
 
+    # 外部集成 TLS 校验 (Wazuh API / OpenSearch)。默认开启 —— 自签证书场景
+    # 应把自签 CA 挂进容器信任链,而不是全局关校验 (凭据会暴露给中间人)。
+    # 确实要用自签证书又不方便装 CA 的开发环境可显式设 TLS_VERIFY=false。
+    tls_verify: bool = Field(default=True, alias="TLS_VERIFY")
+
 
 @lru_cache
 def get_settings() -> Settings:

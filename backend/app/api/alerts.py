@@ -5,9 +5,14 @@
     (inject/poll 需 alert:inject —— analyst/admin;search/types 需 case:read)。
   - webhook_router (共享密钥): Wazuh/国产设备推送入口,无法持 JWT,
     以 X-SecSight-Webhook-Token 校验,未配置密钥 fail-closed 403。
+
+编排触发 (P2 修复): 默认后台异步 (_spawn_orchestration),接入端不被
+LLM/情报调用的延迟反压拖死;测试/演示验证用 ?wait=true 同步等待。
 """
 # 注意: 本模块不用 `from __future__ import annotations` —— slowapi 的 @limiter.limit
 # 包装器丢失原函数 __globals__,字符串注解无法解析,FastAPI 会把 body 参数误判成 query。
+import asyncio
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,17 +33,51 @@ from app.mock.alerts import MOCK_ALERTS
 from app.models.schemas import CaseStatus
 from app.playbooks.engine import engine as playbook_engine
 
+import structlog
+
+log = structlog.get_logger()
+
 router = APIRouter(dependencies=[Depends(require_permission("case:read"))], tags=["alerts"])
 webhook_router = APIRouter(
     dependencies=[Depends(verify_webhook_token)], tags=["alerts-webhook"]
 )
 
+# 后台编排任务引用 (create_task 返回的 task 若无强引用可能被 GC 中途丢弃)
+_background_tasks: set[asyncio.Task] = set()
 
-async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
+
+def _spawn_orchestration(case_id: str, playbook_id: str | None) -> None:
+    """fire-and-forget 编排: 告警风暴时接入端不被 LLM/情报调用的延迟反压拖死
+
+    编排含 LLM (60s 超时) + 每告警多源情报 + 检索,同步 await 会把 webhook
+    端到端延迟拉到分钟级并占满连接池。异步化后 Case/剧本匹配同步落库,
+    推送立即发出,编排后台跑;异常只落日志不丢告警 (Case 已建)。
+    """
+
+    async def _run() -> None:
+        try:
+            await trigger_workflow(case_id, playbook_id)
+        except Exception as e:  # noqa: BLE001
+            log.error("workflow.background_failed", case_id=case_id, error=str(e))
+
+    task = asyncio.create_task(_run())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+async def drain_background_orchestrations() -> None:
+    """等待全部在飞后台编排结束 (测试隔离用: clean_db 先 drain 再 drop 表,
+    避免后台任务与建表/删表争抢 SQLite/连接池;生产进程不调用)"""
+    if _background_tasks:
+        await asyncio.gather(*list(_background_tasks), return_exceptions=True)
+
+
+async def _ingest_and_dispatch(session: AsyncSession, alert, wait: bool = False) -> dict:
     """告警统一入口: 时间窗聚合 → 剧本匹配 → 触发编排
 
     聚合命中时跳过编排触发,因为该 Case 已有 workflow 在跑 (可能正卡在
     human_approve),重复触发会生成重复处置动作。
+    wait=True 同步等待编排完成 (测试/演示验证用),生产默认后台异步。
     """
     repo = CaseRepository(session)
     case, deduped = await repo.ingest_alert(alert)
@@ -72,9 +111,7 @@ async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
             model.playbook_id = playbook.id
             await session.commit()
 
-    await trigger_workflow(case.case_id, playbook_id)
-
-    # 实时推送: 审批面板/Dashboard 的角标立即更新,不等下轮轮询
+    # 实时推送: Case 已建+剧本已匹配,审批面板/Dashboard 立即更新,不等编排
     from app.realtime.broadcast import broadcaster
 
     await broadcaster.publish(
@@ -85,6 +122,11 @@ async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
             "playbook_id": playbook_id,
         },
     )
+
+    if wait:
+        await trigger_workflow(case.case_id, playbook_id)
+    else:
+        _spawn_orchestration(case.case_id, playbook_id)
 
     return {
         "case_id": case.case_id,
@@ -102,12 +144,14 @@ async def _ingest_and_dispatch(session: AsyncSession, alert) -> dict:
 async def inject_alert(
     request: Request,
     req: AlertInjectRequest,
+    wait: bool = False,
     _user: CurrentUser = Depends(require_permission("alert:inject")),
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
-    """注入 mock 告警 → 自动建 Case + 匹配剧本 + 触发编排
+    """注入 mock 告警 → 自动建 Case + 匹配剧本 + 触发编排 (默认后台异步)
 
     垂直切片入口: 调用此端点模拟 Wazuh/Suricata 上报告警。
+    wait=true 同步等待编排完成 (测试/演示验证用)。
     """
     builder = MOCK_ALERTS.get(req.alert_type)
     if not builder:
@@ -120,7 +164,7 @@ async def inject_alert(
         pid=req.pid or 28371,
     )
 
-    data = await _ingest_and_dispatch(session, alert)
+    data = await _ingest_and_dispatch(session, alert, wait=wait)
 
     # 同步索引到 OpenSearch (可选,失败不阻塞)
     await _try_index_opensearch(alert)
@@ -139,6 +183,7 @@ async def list_alert_types() -> ApiResponse:
 async def wazuh_webhook(
     request: Request,
     payload: dict,
+    wait: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """接收 Wazuh 主动推送的告警 (webhook) → 转 Alert → 触发编排
@@ -149,7 +194,7 @@ async def wazuh_webhook(
        "data":{"srcip","dstip","srcuser"}, "agent":{"name","id"}, "full_log"}
 
     与 /wazuh/poll 相比:webhook 是实时推送,poll 是主动拉取。
-    生产推荐 webhook (TTTR 更低)。
+    生产推荐 webhook (TTTR 更低)。wait=true 仅测试/验证用 (同步等编排)。
     """
     from app.integrations.wazuh import parse_wazuh_alert
 
@@ -158,7 +203,7 @@ async def wazuh_webhook(
     except Exception as e:
         return ApiResponse(success=False, error=f"Wazuh 告警解析失败: {e}")
 
-    data = await _ingest_and_dispatch(session, alert)
+    data = await _ingest_and_dispatch(session, alert, wait=wait)
     data["source"] = "wazuh_webhook"
     return ApiResponse(success=True, data=data)
 
@@ -202,7 +247,7 @@ async def poll_wazuh_alerts(
     cases: list = []
     deduped = 0
     for alert in alerts:
-        data = await _ingest_and_dispatch(session, alert)
+        data = await _ingest_and_dispatch(session, alert, wait=False)
         if data["deduped"]:
             deduped += 1
         cases.append(
@@ -335,12 +380,14 @@ async def device_webhook(
     request: Request,
     device_type: str,
     payload: dict,
+    wait: bool = False,
     session: AsyncSession = Depends(get_session),
 ) -> ApiResponse:
     """接收国产设备告警推送 (奇安信/天融信/深信服/绿盟)
 
     device_type: qianxin | topsec | sangfor | nsfocus
     payload: 设备原始告警 JSON (各设备格式不同,由适配器归一化)
+    wait=true 仅测试/验证用 (同步等编排)。
     """
     from app.integrations.domestic_devices import parse_device_alert, DeviceParseError
 
@@ -349,7 +396,7 @@ async def device_webhook(
     except DeviceParseError as e:
         return ApiResponse(success=False, error=str(e))
 
-    data = await _ingest_and_dispatch(session, alert)
+    data = await _ingest_and_dispatch(session, alert, wait=wait)
     await _try_index_opensearch(alert)
     data["source"] = alert.source
     return ApiResponse(success=True, data=data)

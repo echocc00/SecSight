@@ -15,7 +15,10 @@ from tests.conftest import approve_action_with_all_roles
 
 async def _inject(client, alert_type: str = "xmrig_process", hostname: str = "tl-1") -> str:
     resp = await client.post(
-        "/api/alerts/inject", json={"alert_type": alert_type, "hostname": hostname}
+        "/api/alerts/inject",
+        json={"alert_type": alert_type, "hostname": hostname},
+        # 本文件所有用例断言 proposed_actions/execution_log (编排产物),须同步等编排
+        params={"wait": "true"},
     )
     return resp.json()["data"]["case_id"]
 

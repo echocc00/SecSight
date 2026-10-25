@@ -105,7 +105,11 @@ class TestNotifyAPI:
     @pytest.mark.asyncio
     async def test_notify_endpoint(self, auth_client, monkeypatch):
         # 建一个待审批 Case (业务端点需 JWT)
-        r = await auth_client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        r = await auth_client.post(
+            "/api/alerts/inject",
+            json={"alert_type": "xmrig_process"},
+            params={"wait": "true"},  # 断言待审批动作 (编排产物)
+        )
         case_id = r.json()["data"]["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         action_id = pending[0]["action_id"]
@@ -142,7 +146,11 @@ class TestCallbacks:
     @pytest.mark.asyncio
     async def test_dingtalk_callback_approves(self, auth_client, client):
         """钉钉 GET 回调: 合法加签参数 → 签批成功 (身份固定 incident_commander)"""
-        r = await auth_client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        r = await auth_client.post(
+            "/api/alerts/inject",
+            json={"alert_type": "xmrig_process"},
+            params={"wait": "true"},  # 断言待审批动作 (编排产物)
+        )
         case_id = r.json()["data"]["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         action_id = pending[0]["action_id"]
@@ -162,7 +170,11 @@ class TestCallbacks:
     @pytest.mark.asyncio
     async def test_dingtalk_callback_bad_sign_rejected(self, auth_client, client):
         """签名不符 → success=false (fail-closed,不放行)"""
-        r = await auth_client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        r = await auth_client.post(
+            "/api/alerts/inject",
+            json={"alert_type": "xmrig_process"},
+            params={"wait": "true"},  # 断言待审批动作 (编排产物)
+        )
         case_id = r.json()["data"]["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         action_id = pending[0]["action_id"]
@@ -182,7 +194,11 @@ class TestCallbacks:
     @pytest.mark.asyncio
     async def test_feishu_callback_approves(self, auth_client, client):
         """飞书 POST 回调: 合法签名头 → 签批成功 (签名覆盖原始请求体)"""
-        r = await auth_client.post("/api/alerts/inject", json={"alert_type": "xmrig_process"})
+        r = await auth_client.post(
+            "/api/alerts/inject",
+            json={"alert_type": "xmrig_process"},
+            params={"wait": "true"},  # 断言待审批动作 (编排产物)
+        )
         case_id = r.json()["data"]["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         action_id = pending[0]["action_id"]

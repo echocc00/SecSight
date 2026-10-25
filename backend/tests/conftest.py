@@ -82,16 +82,23 @@ async def _seed_users() -> None:
 
 @pytest_asyncio.fixture(autouse=True)
 async def clean_db():
-    """每个测试前重建表 + 种子用户,保证隔离"""
+    """每个测试前重建表 + 种子用户,保证隔离
+
+    先 drain 在飞的后台编排任务 —— 默认 fire-and-forget 的 workflow 若跨
+    测试边界存活,会与 drop/create 争抢 SQLite (表锁/连接错乱)。
+    """
     import app.db.models  # noqa: F401  # 确保表已注册到 metadata (单文件运行时无其他模块导入)
 
+    from app.api.alerts import drain_background_orchestrations
     from app.db.database import Base, engine
 
+    await drain_background_orchestrations()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     await _seed_users()
     yield
+    await drain_background_orchestrations()
 
 
 @pytest_asyncio.fixture

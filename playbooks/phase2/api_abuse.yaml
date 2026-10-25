@@ -10,10 +10,13 @@ description: |
   API 被异常调用 (流量异常/未授权越权/凭证复用)。
 triggers:
   sigma_rules: [api_abuse, api_unauthorized]
+  # API 网关/WAF 日志中的敏感端点路径 (请求行或 JSON 字段均可命中)
   indicators:
-    commands: ["GET /api/private"]
+    commands: ["api/private"]
 mitre_mapping:
-  tactics: [TA0009 Collection]
+  # T1078 (Valid Accounts) 属 TA0001/TA0006,原误挂 TA0009 Collection;
+  # 凭证复用/撞库调用按 Initial Access + Credential Access 映射
+  tactics: [TA0001 Initial Access, TA0006 Credential Access]
   techniques: [T1078 Valid Accounts, T1110 Brute Force]
 investigation_steps:
   - id: I1

@@ -10,8 +10,10 @@ description: |
   等保 2.0 SCA 基线扫描发现偏差 (口令策略/补丁/加固项)。
 triggers:
   sigma_rules: [compliance_baseline_deviation, soc_check_findings]
-  process_patterns:
-    names: [cis, sca]
+  wazuh_rules:
+    - "19007"   # SCA check failed (Wazuh ruleset 0570-sca_rules.xml)
+    - "19011"   # SCA check: passed -> failed (基线劣化)
+  # SCA 告警无进程可匹配,原 [cis, sca] 占位词已删除
 mitre_mapping:
   tactics: []
   techniques: []

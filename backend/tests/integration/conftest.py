@@ -16,8 +16,6 @@ from __future__ import annotations
 import os
 import pathlib
 
-import pytest
-
 _PG_LIVE = os.environ.get("SECSIGHT_PG_LIVE") == "1"
 _DB_URL = os.environ.get("DATABASE_URL", "")
 _IS_PG = _DB_URL.startswith("postgresql")
@@ -33,10 +31,20 @@ if _PG_LIVE and _IS_PG:
 import httpx  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    not (_PG_LIVE and _IS_PG),
-    reason="需真实 Postgres: 设 SECSIGHT_PG_LIVE=1 + DATABASE_URL=postgresql+asyncpg://...",
-)
+
+def _pg_skipped() -> str | None:
+    """门控判断 (collect_ignore 用): 无 PG 环境时整个目录跳过收集
+
+    注意不能用 conftest 里的 pytestmark —— conftest 的 pytestmark 不会
+    应用到测试模块,曾导致无 PG 时夹具仍执行 PG 专用 SQL 而报错。
+    """
+    if _PG_LIVE and _IS_PG:
+        return None
+    return "需真实 Postgres: 设 SECSIGHT_PG_LIVE=1 + DATABASE_URL=postgresql+asyncpg://..."
+
+
+def pytest_ignore_collect(collection_path, config):
+    return _pg_skipped() is not None
 
 
 @pytest_asyncio.fixture(autouse=True)

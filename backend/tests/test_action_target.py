@@ -182,6 +182,7 @@ class TestEndToEndTargetPopulated:
                 "hostname": "tgt-host-1",
                 "src_ip": "45.33.32.156",
             },
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
         case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
@@ -199,6 +200,7 @@ class TestEndToEndTargetPopulated:
         resp = await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "tgt-host-2"},
+            params={"wait": "true"},
         )
         case_id = resp.json()["data"]["case_id"]
         case = (await auth_client.get(f"/api/cases/{case_id}")).json()["data"]
@@ -215,6 +217,7 @@ class TestEndToEndTargetPopulated:
         await auth_client.post(
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "tgt-host-3"},
+            params={"wait": "true"},
         )
         items = (await auth_client.get("/api/approvals/pending")).json()["data"]["items"]
         isolate_items = [i for i in items if i["action_type"] == "isolate_host"]
@@ -227,6 +230,7 @@ class TestEndToEndTargetPopulated:
             await auth_client.post(
                 "/api/alerts/inject",
                 json={"alert_type": alert_type, "hostname": f"tgt-{alert_type}"},
+                params={"wait": "true"},
             )
 
         items = (await auth_client.get("/api/approvals/pending")).json()["data"]["items"]

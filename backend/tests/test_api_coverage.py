@@ -11,8 +11,10 @@ import pytest
 from tests.conftest import WEBHOOK_TOKEN, approve_action_with_all_roles
 
 
-async def _inject(client, alert_type: str = "xmrig_process") -> dict:
-    r = await client.post("/api/alerts/inject", json={"alert_type": alert_type})
+async def _inject(client, alert_type: str = "xmrig_process", wait: bool = False) -> dict:
+    """wait=True: 同步等编排完成 (断言 approvals/records 等编排产物时必须)"""
+    params = {"wait": "true"} if wait else None
+    r = await client.post("/api/alerts/inject", json={"alert_type": alert_type}, params=params)
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -185,7 +187,7 @@ class TestDevicesWebhook:
 class TestApprovalRecords:
     @pytest.mark.asyncio
     async def test_list_approval_records_empty(self, auth_client):
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         case_id = data["case_id"]
         r = await auth_client.get(f"/api/approvals/{case_id}/records")
         assert r.status_code == 200
@@ -193,7 +195,7 @@ class TestApprovalRecords:
 
     @pytest.mark.asyncio
     async def test_list_approval_records_after_approval(self, auth_client):
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         case_id = data["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         aid = pending[0]["action_id"]
@@ -211,7 +213,7 @@ class TestApprovalRecords:
     @pytest.mark.asyncio
     async def test_pending_shows_missing_roles(self, auth_client):
         """pending 端点返回 required/approved/missing roles"""
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         case_id = data["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         assert len(pending) > 0
@@ -233,7 +235,7 @@ class TestWorkflowResume:
         """resume_workflow: 全部审批角色签批后恢复 → resolved (身份来自 JWT/IM 回调)"""
         from app.agents.workflow import resume_workflow
 
-        data = await _inject(auth_client, "xmrig_process")
+        data = await _inject(auth_client, "xmrig_process", wait=True)
         case_id = data["case_id"]
         pending = (await auth_client.get(f"/api/approvals/{case_id}/pending")).json()["data"]
         for action in pending:

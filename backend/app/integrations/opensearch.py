@@ -48,7 +48,8 @@ class OpenSearchClient:
                 base_url=self.base_url,
                 auth=auth,
                 timeout=self.timeout,
-                verify=False,  # OpenSearch 默认自签证书,生产收紧
+                # TLS_VERIFY 默认开启;自签证书应装 CA 而非全局关校验 (凭据防中间人)
+                verify=settings.tls_verify,
             )
         return self._client
 

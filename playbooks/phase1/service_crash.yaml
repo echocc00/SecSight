@@ -18,8 +18,8 @@ triggers:
     - critical_service_stopped
     - process_killed_signal
   wazuh_rules:
-    - "service_down"
-    - "591"     # process ended
+    - "591"     # 既有核验保留项 (注: 官方 ruleset 中 591 = "Log file rotated";
+                # 关键服务崩溃检测主要靠 sigma/indicators,mock 告警沿用 rule_id=591)
   process_patterns:
     names: []
     cmdline_contains:

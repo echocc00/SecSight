@@ -10,9 +10,13 @@ description: |
   WAF 拦截到攻击请求 (SQLi/XSS/恶意爬虫)。
 triggers:
   sigma_rules: [waf_trigger, waf_sqli, waf_xss]
-  wazuh_rules: ["933100"]
-  process_patterns:
-    names: [waf]
+  wazuh_rules:
+    - "30118"   # ModSecurity: Access attempt blocked (Wazuh ruleset 0250-apache_rules.xml)
+    - "30119"   # ModSecurity: Multiple attempts blocked
+    - "30201"   # ModSecurity: Access denied
+  # WAF 拦截日志中的攻击载荷特征 (原 933100 为 OWASP CRS 规则号,非 Wazuh 规则,已删除)
+  indicators:
+    commands: ["union select", "<script", "etc/passwd"]
 mitre_mapping:
   tactics: [TA0001 Initial Access]
   techniques: [T1190 Exploit Public-Facing Application]

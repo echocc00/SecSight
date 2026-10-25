@@ -126,6 +126,10 @@ class TestBroadcastEndToEnd:
                 "/api/alerts/inject",
                 json={"alert_type": "xmrig_process", "hostname": "ws-case-1"},
                 headers=headers,
+                # TestClient 在独立 portal 事件循环跑 app: fire-and-forget 的后台
+                # 编排会与 pytest 循环的 clean_db 并发写 SQLite (database is locked),
+                # 且 drain 无法跨循环等待 —— ws_client 场景必须 wait=true 同步跑完。
+                params={"wait": "true"},
             )
             assert resp.status_code == 200
             case_id = resp.json()["data"]["case_id"]
@@ -143,6 +147,7 @@ class TestBroadcastEndToEnd:
             "/api/alerts/inject",
             json={"alert_type": "data_exfiltration", "hostname": "ws-approval-1"},
             headers=headers,
+            params={"wait": "true"},  # 断言待审批动作 (编排产物)
         ).json()["data"]["case_id"]
         pending = ws_client.get(
             f"/api/approvals/{inject}/pending", headers=headers
@@ -172,6 +177,7 @@ class TestBroadcastEndToEnd:
             "/api/alerts/inject",
             json={"alert_type": "xmrig_process", "hostname": "ws-exec-1"},
             headers=headers,
+            params={"wait": "true"},  # 断言待审批动作 (编排产物)
         ).json()["data"]["case_id"]
         pending = ws_client.get(
             f"/api/approvals/{inject}/pending", headers=headers
@@ -215,6 +221,8 @@ class TestBroadcastEndToEnd:
                 "/api/alerts/inject",
                 json={"alert_type": "xmrig_process", "hostname": "ws-disconnect-1"},
                 headers=headers,
+                # 同上: portal 循环内不能留 fire-and-forget 后台编排 (跨循环 SQLite 竞争)
+                params={"wait": "true"},
             )
             event = ws.receive_json()
             assert event["type"] == "case_created"

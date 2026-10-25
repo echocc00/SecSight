@@ -10,8 +10,10 @@ description: |
   备份作业失败/备份数据异常 (存储满/加密勒索前兆)。
 triggers:
   sigma_rules: [backup_failure, backup_abnormal]
+  # 主流备份软件作业进程 (bacula 三守护/veeam agent/restic/borg 等);
+  # 备份失败告警源多为备份软件自身日志,无统一 Wazuh 规则号
   process_patterns:
-    names: [bacula, backup]
+    names: [bacula-dir, bacula-fd, bacula-sd, bconsole, veeam, restic, borg, duplicity]
 mitre_mapping:
   tactics: [TA0040 Impact]
   techniques: [T1486 Data Encrypted for Impact]
@@ -41,7 +43,8 @@ containment_actions:
   - id: A3_verify
     name: 校验最近备份可用
     action_type: notify
-    autonomy: L5
+    autonomy: L2
+    approval: double
     tools: [restore_drill]
 knowledge_assets:
   iocs: []

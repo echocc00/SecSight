@@ -13,7 +13,10 @@ from tests.conftest import approve_action_with_all_roles, sign_approval
 
 async def _inject(client, alert_type: str = "data_exfiltration", hostname: str = "h1") -> str:
     resp = await client.post(
-        "/api/alerts/inject", json={"alert_type": alert_type, "hostname": hostname}
+        "/api/alerts/inject",
+        json={"alert_type": alert_type, "hostname": hostname},
+        # 本文件所有用例都断言待签/处置动作 (编排产物),须同步等编排完成
+        params={"wait": "true"},
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["case_id"]

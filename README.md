@@ -191,7 +191,18 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 
 ## 状态
 
-🚀 v0.6.2 — **安全加固**:全站路由鉴权落地 + 审批身份 JWT 绑定 + 回调/Webhook 准入凭证。663 测试全绿,覆盖率 80% 门槛强制。
+🚀 v0.6.3 — **迭代 2 可靠性加固**:告警入口异步化 / TLS 校验默认开启 / 22 剧本触发器真实化 / 部署端口收敛。后端 669+ 测试,前端首次有单测 (vitest)。
+
+**v0.6.3 新增 (迭代 2,P2 清理)**:
+- **告警入口异步化**: inject/webhook 的编排触发改后台任务 (fire-and-forget,异常落日志) —— 此前 Wazuh webhook 同步等完 LLM+情报+检索才返回,告警风暴时反压打挂接入端;测试/演示用 `?wait=true` 同步
+- **TLS 校验默认开启**: Wazuh/OpenSearch 客户端 `verify` 接入 `TLS_VERIFY` 配置 (默认 true) —— 此前写死 verify=False,凭据可被中间人截获;生产关闭会启动告警
+- **剧本触发器真实化**: 10 个骨架剧本的占位触发器 (`[tamper]/[waf]/[dlp]` 等) 替换为真实进程名/指标;Wazuh 规则号逐 ID 经官方 ruleset 核实 (删 933100/9222/84448/0320 等不可核实项,补 30118/554/504/19007/44422);修 8 处 MITRE 错配;备份恢复演练 L5→L2 双签
+- **部署端口收敛**: 全部 15 个端口发布绑 127.0.0.1 (容器间走 compose 网络不受影响) —— 此前 Shuffle/OpenCTI/IRIS 向 LAN 裸暴露;Grafana 密码不再内联兜底 ChangeMe_123;CI 隔离检查从装饰变成真拦截
+- **mock 告警规则号对齐真实 Wazuh ID** (502→504 / 933100→30118 / 0320→内部 ID)
+- **前端**: 菜单高亮随路由;首次单测 (vitest 13 条: datetime 时区坑回归 + ws 事件总线);AlertSearch rowKey 防御
+- **杂项**: 集成测试 skipif 门控修复 (原写在 conftest 不生效)
+
+**v0.6.2 — 安全加固 (P0/P1)**: 全站路由鉴权落地 + 审批身份 JWT 绑定 + 回调/Webhook 准入凭证 + 审批终态 + 双真相源清理。详见下方 v0.6.2 明细。
 
 **v0.6.2 新增 (P0/P1 安全修复,评审驱动)**:
 - **全站鉴权落地**: cases/playbooks/approvals/evidence/compliance/agents/knowledge 全部挂 JWT + 权限矩阵 (此前仅 auth/audit 有鉴权,其余端点裸奔);webhook 走 `WEBHOOK_TOKEN` 共享密钥 (fail-closed,未配置即 403)
@@ -204,13 +215,14 @@ SecSight 主体代码: Apache-2.0 (可闭源商业化)。
 - **前端**: nginx 补 WebSocket 升级头 (修复生产部署实时推送必挂)、审批面板按登录身份展示 (去掉可自报的角色下拉)、ErrorBoundary、Case 加载错误态
 - **剧本模型补字段**: evidence_pack/compliance 顶层配置不再被 Pydantic 静默丢弃 (等保上报参数生效)
 
-> ⚠️ **升级注意**: 部署需在 .env 配置 `WEBHOOK_TOKEN` (Wazuh/国产设备推送) 与
-> `FEISHU_APP_SECRET`/`DINGTALK_APP_SECRET` (IM 审批回调),否则对应端点返回 403 —— 这是刻意的 fail-closed。
-> Wazuh 主动推送需在 integration 配置 header: `X-SecSight-Webhook-Token: <WEBHOOK_TOKEN>`。
+> ⚠️ **升级注意**: 部署需在 .env 配置 `WEBHOOK_TOKEN` (Wazuh/国产设备推送)、
+> `FEISHU_APP_SECRET`/`DINGTALK_APP_SECRET` (IM 审批回调)、`GRAFANA_ADMIN_PASSWORD` (v0.6.3 起 compose 强制),
+> 否则对应端点 403 或启动失败 —— 刻意的 fail-closed。Wazuh integration 需加 `<api_key>` (值同 WEBHOOK_TOKEN)。
+> v0.6.3 起管理 UI 端口默认只绑 127.0.0.1,远程访问请配 SSH 隧道或反代。
 
-> 📋 **口径校准 (实事求是)**: 22 个剧本 YAML 中,Phase1 6 个 + Phase2 6 个为完整实现,
-> 其余 10 个为骨架 (部分触发器为占位);Shuffle workflow 骨架 4/8;知识库 L0/L1 为薄层起步。
-> README/架构图为设计目标视图,实际能力以 `/api/status` (需鉴权) 与启动警告输出为准。
+> 📋 **口径校准 (实事求是)**: 22 个剧本 YAML 触发器现已全部真实化 (规则号经官方 ruleset 核实),
+> 但调查/处置动作的工具引用仍多为设计意图 (60+ 工具名无实现,执行靠 Shuffle workflow/MockExecutor);
+> Shuffle workflow 骨架 4/8;知识库 L0/L1 为薄层起步。实际能力以 `/api/status` (需鉴权) 与启动警告输出为准。
 
 **v0.6.1 — OpenCTI 真实验证通过: 642 测试,覆盖率 87%+。OpenCTI 6.2 容器 (隔离网段) 真实联调 + compose 部署修复。**
 
